@@ -6,7 +6,7 @@ import {
 import {
   Users, CalendarOff, ClipboardCheck, Fuel, Plus, Trash2, AlertTriangle, Clock,
   Package, Gauge, CalendarDays, LogOut, ShieldCheck, Megaphone, Sun, Sunset, Moon,
-  Check, X as XIcon, Play, Square, FileText, Bell, BellRing,
+  Check, X as XIcon, Play, Square, FileText, Bell, BellRing, Pencil,
 } from "lucide-react";
 
 const REASON_OPTIONS = ["Marriage", "Personal", "Fever", "Other"];
@@ -48,7 +48,7 @@ const deleteRec = (col, id) => deleteDoc(doc(db, col, id));
 
 const TABS = [
   { id: "home", label: "Home", icon: Clock },
-  { id: "leave", label: "Chutti", icon: CalendarOff },
+  { id: "leave", label: "Leave", icon: CalendarOff },
   { id: "rounds", label: "Rounds", icon: Package },
   { id: "mileage", label: "Mileage", icon: Gauge },
   { id: "myfuel", label: "My Fuel", icon: Fuel },
@@ -65,6 +65,7 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("riderops_user") || "null"); } catch { return null; }
   });
   const [tab, setTab] = useState("home");
+  const [editingProfile, setEditingProfile] = useState(false);
 
   const [riders, ridersLoading] = useCollection("riders");
   const [leaves] = useCollection("leaves");
@@ -88,6 +89,13 @@ export default function App() {
     localStorage.setItem("riderops_user", JSON.stringify(u));
   };
   const logout = () => { setUser(null); localStorage.removeItem("riderops_user"); };
+  const saveProfile = async (updates) => {
+    await updateRec("riders", user.id, updates);
+    const newUser = { ...user, name: updates.name ?? user.name };
+    setUser(newUser);
+    localStorage.setItem("riderops_user", JSON.stringify(newUser));
+    setEditingProfile(false);
+  };
 
   const riderName = (id) => riders.find((r) => r.id === id)?.name || "Unknown";
   const isHoliday = (iso) => isSunday(iso) || holidays.some((h) => h.date === iso);
@@ -112,9 +120,14 @@ export default function App() {
               <h1 className="font-display glow" style={{fontSize:24,fontWeight:800,color:"#F5A623",lineHeight:1}}>RIDER OPS</h1>
               <GreetingLine user={user} />
             </div>
-            <button onClick={logout} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:4}}>
-              <LogOut size={12}/> Switch
-            </button>
+            <div style={{display:"flex",gap:6,flexShrink:0}}>
+              <button onClick={()=>setEditingProfile(true)} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:4}}>
+                <Pencil size={12}/> Edit
+              </button>
+              <button onClick={logout} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:4}}>
+                <LogOut size={12}/> Switch
+              </button>
+            </div>
           </div>
         </div>
         <nav className="tabs">
@@ -144,6 +157,49 @@ export default function App() {
         {tab==="reports" && isAdmin && <ReportsTab riders={riders} leaves={leaves} rounds={rounds} odometer={odometer}
           adminFuel={adminFuel} personalFuel={personalFuel} attendance={attendance} riderName={riderName}/>}
       </main>
+
+      {editingProfile && (
+        <EditProfileModal user={user} riders={riders} onSave={saveProfile} onClose={()=>setEditingProfile(false)} />
+      )}
+    </div>
+  );
+}
+
+function EditProfileModal({ user, riders, onSave, onClose }) {
+  const me = riders.find((r) => r.id === user.id);
+  const [name, setName] = useState(me?.name || user.name);
+  const [phone, setPhone] = useState(me?.phone || "");
+  const [pin, setPin] = useState(me?.pin || "");
+  const isPrivileged = user.role === "admin" || user.role === "founder";
+
+  const save = () => {
+    if (!name.trim()) return;
+    const updates = { name: name.trim(), phone: phone.trim() };
+    if (isPrivileged) updates.pin = pin.trim() || "1234";
+    onSave(updates);
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,zIndex:50}}>
+      <div className="card" style={{maxWidth:360,width:"100%",display:"flex",flexDirection:"column",gap:12}}>
+        <div className="section-label">Edit Profile</div>
+        <div>
+          <label style={{fontSize:10,color:"#7C8592",textTransform:"uppercase"}}>Name</label>
+          <input value={name} onChange={(e)=>setName(e.target.value)} className="input" style={{marginTop:4}}/>
+        </div>
+        <div>
+          <label style={{fontSize:10,color:"#7C8592",textTransform:"uppercase"}}>Phone (optional)</label>
+          <input value={phone} onChange={(e)=>setPhone(e.target.value)} className="input font-mono" style={{marginTop:4}}/>
+        </div>
+        {isPrivileged && (
+          <div>
+            <label style={{fontSize:10,color:"#7C8592",textTransform:"uppercase"}}>PIN</label>
+            <input value={pin} onChange={(e)=>setPin(e.target.value)} placeholder="1234" className="input font-mono" style={{marginTop:4}}/>
+          </div>
+        )}
+        <button onClick={save} disabled={!name.trim()} className="btn-primary">Save Changes</button>
+        <button onClick={onClose} style={{background:"none",border:"none",color:"#7C8592",fontSize:12,cursor:"pointer"}}>Cancel</button>
+      </div>
     </div>
   );
 }
@@ -174,7 +230,7 @@ function LoginScreen({ riders, onLogin }) {
   };
   const confirmPin = () => {
     if (pin === (pinFor.pin || "1234")) onLogin({ id: pinFor.id, name: pinFor.name, role: pinFor.role });
-    else setErr("Galat PIN.");
+    else setErr("Incorrect PIN.");
   };
 
   return (
@@ -188,7 +244,7 @@ function LoginScreen({ riders, onLogin }) {
 
       {!pinFor ? (
         <div style={{maxWidth:360,margin:"0 auto",width:"100%",display:"flex",flexDirection:"column",gap:8}}>
-          <p style={{fontSize:11,color:"#7C8592",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Apna naam chuno</p>
+          <p style={{fontSize:11,color:"#7C8592",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Choose your name</p>
           {riders.map((r) => (
             <button key={r.id} onClick={()=>tryLogin(r)} className="card" style={{textAlign:"left",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <span style={{fontWeight:600,fontSize:14}}>{r.name}</span>
@@ -203,7 +259,7 @@ function LoginScreen({ riders, onLogin }) {
             className="input font-mono" style={{textAlign:"center",letterSpacing:"0.3em"}}/>
           {err && <p style={{fontSize:11,color:"#E5484D"}}>{err}</p>}
           <button onClick={confirmPin} className="btn-primary">Login</button>
-          <button onClick={()=>setPinFor(null)} style={{background:"none",border:"none",color:"#7C8592",fontSize:12,cursor:"pointer"}}>← Wapas</button>
+          <button onClick={()=>setPinFor(null)} style={{background:"none",border:"none",color:"#7C8592",fontSize:12,cursor:"pointer"}}>← Back</button>
         </div>
       )}
     </div>
@@ -246,31 +302,31 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
         <button onClick={enableNotifs} className="card" style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",border:"1px solid rgba(245,166,35,0.4)",background:"rgba(245,166,35,0.08)",width:"100%",textAlign:"left"}}>
           <Bell size={18} color="#F5A623"/>
           <div>
-            <div style={{fontSize:13,fontWeight:600,color:"#F5A623"}}>Notifications On Karo</div>
-            <div style={{fontSize:11,color:"#B9C0CA"}}>Chutti reminder seedha phone pe pane ke liye tap karo.</div>
+            <div style={{fontSize:13,fontWeight:600,color:"#F5A623"}}>Enable Notifications</div>
+            <div style={{fontSize:11,color:"#B9C0CA"}}>Tap to get leave reminders directly on your phone.</div>
           </div>
         </button>
       )}
       {notifStatus === "granted" && (
         <div className="card" style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:"#3DDC97"}}>
-          <BellRing size={15}/> Notifications ON hain.
+          <BellRing size={15}/> Notifications are ON.
         </div>
       )}
       {!isAdmin && (
         <div className="card">
           <div className="section-label">Duty Status</div>
           {onLeaveToday ? (
-            <p style={{fontSize:14,color:"#E5484D"}}>Aap aaj chutti par hain.</p>
+            <p style={{fontSize:14,color:"#E5484D"}}>You are on leave today.</p>
           ) : myDuty && !myDuty.endTime ? (
             <>
               <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:28,color:"#3DDC97"}}>{fmtHours(Date.now()-myDuty.startTime)}</div>
-              <div style={{fontSize:11,color:"#7C8592",marginBottom:10}}>duty pe ho since {new Date(myDuty.startTime).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div>
+              <div style={{fontSize:11,color:"#7C8592",marginBottom:10}}>On duty since {new Date(myDuty.startTime).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div>
               <button onClick={endDuty} className="btn-primary" style={{background:"#E5484D",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
                 <Square size={14}/> End Duty
               </button>
             </>
           ) : myDuty && myDuty.endTime ? (
-            <p style={{fontSize:14,color:"#7C8592"}}>Aaj duty complete — {fmtHours(myDuty.endTime-myDuty.startTime)} kaam kiya.</p>
+            <p style={{fontSize:14,color:"#7C8592"}}>Duty completed today — worked {fmtHours(myDuty.endTime-myDuty.startTime)}.</p>
           ) : (
             <button onClick={startDuty} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
               <Play size={14}/> Start Duty
@@ -286,7 +342,7 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
 
       {myStatus && (
         <div className="card" style={{fontSize:13}}>
-          Aaj ka attendance: <span className="badge" style={{background: myStatus==="present"?"rgba(61,220,151,0.15)":myStatus==="late"?"rgba(245,166,35,0.15)":"rgba(229,72,77,0.15)", color: myStatus==="present"?"#3DDC97":myStatus==="late"?"#F5A623":"#E5484D"}}>{myStatus}</span>
+          Today's attendance: <span className="badge" style={{background: myStatus==="present"?"rgba(61,220,151,0.15)":myStatus==="late"?"rgba(245,166,35,0.15)":"rgba(229,72,77,0.15)", color: myStatus==="present"?"#3DDC97":myStatus==="late"?"#F5A623":"#E5484D"}}>{myStatus}</span>
         </div>
       )}
 
@@ -294,7 +350,7 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
         <div className="card" style={{borderColor:"rgba(245,166,35,0.4)",background:"rgba(245,166,35,0.08)"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
             <AlertTriangle size={15} color="#F5A623"/>
-            <span className="font-display" style={{fontSize:13,fontWeight:700,color:"#F5A623"}}>REMINDER — KAL CHUTTI PE</span>
+            <span className="font-display" style={{fontSize:13,fontWeight:700,color:"#F5A623"}}>REMINDER — ON LEAVE TOMORROW</span>
           </div>
           {leavesTomorrow.map((l) => (
             <div key={l.id} style={{fontSize:13}}><b>{riderName(l.riderId)}</b> — {l.customReason || l.reason}</div>
@@ -304,7 +360,7 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
 
       {isHoliday(tomorrow) && (
         <div className="card" style={{borderColor:"rgba(138,165,255,0.4)",background:"rgba(138,165,255,0.08)",color:"#8AA5FF",fontSize:13}}>
-          Kal ({fmtDate(tomorrow)}) holiday hai.
+          Tomorrow ({fmtDate(tomorrow)}) is a holiday.
         </div>
       )}
 
@@ -315,7 +371,7 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
         </div>
       )}
 
-      <button onClick={()=>setTab("leave")} className="btn-ghost" style={{width:"100%",padding:10}}>Go to Chutti / Leave →</button>
+      <button onClick={()=>setTab("leave")} className="btn-ghost" style={{width:"100%",padding:10}}>Go to Leave →</button>
     </div>
   );
 }
@@ -351,26 +407,26 @@ function LeaveTab({ user, isAdmin, riders, leaves, riderName, isHoliday }) {
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
-        <div className="section-label">Chutti Request Bhejo</div>
+        <div className="section-label">Submit Leave Request</div>
         <input type="date" value={date} min={todayISO()} onChange={(e)=>setDate(e.target.value)} className="input font-mono"/>
-        {isHoliday(date) && <p style={{fontSize:11,color:"#8AA5FF"}}>Yeh date pehle se holiday hai.</p>}
+        {isHoliday(date) && <p style={{fontSize:11,color:"#8AA5FF"}}>This date is already a holiday.</p>}
         <select value={reason} onChange={(e)=>setReason(e.target.value)} className="input">
           {REASON_OPTIONS.map(r=><option key={r} value={r}>{r}</option>)}
         </select>
-        {reason==="Other" && <input value={customReason} onChange={(e)=>setCustomReason(e.target.value)} placeholder="Apna reason likho" className="input"/>}
+        {reason==="Other" && <input value={customReason} onChange={(e)=>setCustomReason(e.target.value)} placeholder="Enter your reason" className="input"/>}
         <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#B9C0CA"}}>
-          <input type="checkbox" checked={halfDay} onChange={(e)=>setHalfDay(e.target.checked)}/> Half-day / late aayega
+          <input type="checkbox" checked={halfDay} onChange={(e)=>setHalfDay(e.target.checked)}/> Half-day / will be late
         </label>
         <button onClick={submit} disabled={reason==="Other" && !customReason.trim()} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-          <Plus size={15}/> Request Bhejo
+          <Plus size={15}/> Submit Request
         </button>
-        <p style={{fontSize:11,color:"#7C8592"}}>Request sabko dikhegi as "pending" jab tak admin approve/reject na kare.</p>
+        <p style={{fontSize:11,color:"#7C8592"}}>The request will show as "pending" to everyone until admin approves or rejects it.</p>
       </div>
 
       <div>
-        <div className="section-label">Sab Leave Requests</div>
+        <div className="section-label">All Leave Requests</div>
         <div className="list-card">
-          {sorted.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>Koi chutti record nahi hai.</div> :
+          {sorted.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No leave records yet.</div> :
             sorted.map((l)=>(
               <div key={l.id} className="list-row">
                 <div style={{minWidth:0}}>
@@ -452,7 +508,7 @@ function RoundsTab({ user, isAdmin, riders, rounds, riderName }) {
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       {isAdmin && (
         <select value={viewRiderId} onChange={(e)=>setViewRiderId(e.target.value)} className="input">
-          <option value="">Rider chuno</option>
+          <option value="">Select rider</option>
           {riders.filter(r=>r.role==="rider").map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
       )}
@@ -469,22 +525,22 @@ function RoundsTab({ user, isAdmin, riders, rounds, riderName }) {
 
       {canAddNew ? (
         <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
-          <div className="section-label">Round {myRoundsToday.length+1} Start Karo</div>
+          <div className="section-label">Start Round {myRoundsToday.length+1}</div>
           <input value={drs} onChange={(e)=>setDrs(e.target.value)} placeholder="DRS Number (mandatory)" className="input"/>
-          <input type="number" value={deliveryCount} onChange={(e)=>setDeliveryCount(e.target.value)} placeholder="Kitne parcel leke ja rahe ho" className="input font-mono"/>
-          <button onClick={startRound} disabled={!drs.trim() || !deliveryCount} className="btn-primary">Round Start Karo</button>
+          <input type="number" value={deliveryCount} onChange={(e)=>setDeliveryCount(e.target.value)} placeholder="How many parcels are you taking" className="input font-mono"/>
+          <button onClick={startRound} disabled={!drs.trim() || !deliveryCount} className="btn-primary">Start Round</button>
         </div>
       ) : (
         <div className="card" style={{borderColor:"rgba(245,166,35,0.4)",background:"rgba(245,166,35,0.08)"}}>
-          <p style={{fontSize:13,marginBottom:10}}>Round {openRound.roundNumber} abhi close nahi hua — DRS {openRound.drsNumber}, {openRound.deliveryCount} parcel leke gaye the. Agla round shuru karne se pehle isse close karo.</p>
-          <button onClick={()=>openCloseModal(openRound)} className="btn-primary">Round {openRound.roundNumber} Close Karo</button>
+          <p style={{fontSize:13,marginBottom:10}}>Round {openRound.roundNumber} is not closed yet — DRS {openRound.drsNumber}, took {openRound.deliveryCount} parcels. Close it before starting the next round.</p>
+          <button onClick={()=>openCloseModal(openRound)} className="btn-primary">Close Round {openRound.roundNumber}</button>
         </div>
       )}
 
       <div>
-        <div className="section-label">Aaj Ke Rounds</div>
+        <div className="section-label">Today's Rounds</div>
         <div className="list-card">
-          {myRoundsToday.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>Koi round nahi hai.</div> :
+          {myRoundsToday.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No rounds yet.</div> :
             myRoundsToday.map(r=>(
               <div key={r.id} className="list-row">
                 <div>
@@ -501,7 +557,7 @@ function RoundsTab({ user, isAdmin, riders, rounds, riderName }) {
       </div>
 
       <div className="card">
-        <div className="section-label">Is Mahine Ka Total</div>
+        <div className="section-label">This Month's Total</div>
         <div className="stat-grid">
           <StatCard label="Total Delivered" value={monthDelivered} color="#3DDC97"/>
           <StatCard label="Total Pickup" value={monthPickup} color="#F5A623"/>
@@ -513,24 +569,24 @@ function RoundsTab({ user, isAdmin, riders, rounds, riderName }) {
       {closingRound && (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,zIndex:50}}>
           <div className="card" style={{maxWidth:360,width:"100%",display:"flex",flexDirection:"column",gap:12}}>
-            <div className="section-label">Round {closingRound.roundNumber} Close Karo</div>
+            <div className="section-label">Close Round {closingRound.roundNumber}</div>
 
-            <p style={{fontSize:13}}>Kya saare {closingRound.deliveryCount} parcel deliver ho gaye, ya kuch return hue?</p>
+            <p style={{fontSize:13}}>Were all {closingRound.deliveryCount} parcels delivered, or were some returned?</p>
             <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setHadReturns(false)} className="btn-ghost" style={{flex:1, borderColor: hadReturns===false?"#3DDC97":"#2A3038", color: hadReturns===false?"#3DDC97":"#7C8592"}}>Sab Delivered</button>
-              <button onClick={()=>setHadReturns(true)} className="btn-ghost" style={{flex:1, borderColor: hadReturns===true?"#E5484D":"#2A3038", color: hadReturns===true?"#E5484D":"#7C8592"}}>Kuch Return Hue</button>
+              <button onClick={()=>setHadReturns(false)} className="btn-ghost" style={{flex:1, borderColor: hadReturns===false?"#3DDC97":"#2A3038", color: hadReturns===false?"#3DDC97":"#7C8592"}}>All Delivered</button>
+              <button onClick={()=>setHadReturns(true)} className="btn-ghost" style={{flex:1, borderColor: hadReturns===true?"#E5484D":"#2A3038", color: hadReturns===true?"#E5484D":"#7C8592"}}>Some Returned</button>
             </div>
             {hadReturns && (
-              <input type="number" value={returnedInput} onChange={(e)=>setReturnedInput(e.target.value)} placeholder="Kitne return hue" className="input font-mono"/>
+              <input type="number" value={returnedInput} onChange={(e)=>setReturnedInput(e.target.value)} placeholder="How many were returned" className="input font-mono"/>
             )}
 
-            <p style={{fontSize:13,marginTop:6}}>Is round me koi pickup laaye?</p>
+            <p style={{fontSize:13,marginTop:6}}>Did you bring any pickups this round?</p>
             <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setHadPickup(false)} className="btn-ghost" style={{flex:1, borderColor: hadPickup===false?"#3DDC97":"#2A3038", color: hadPickup===false?"#3DDC97":"#7C8592"}}>Nahi</button>
-              <button onClick={()=>setHadPickup(true)} className="btn-ghost" style={{flex:1, borderColor: hadPickup===true?"#F5A623":"#2A3038", color: hadPickup===true?"#F5A623":"#7C8592"}}>Haan</button>
+              <button onClick={()=>setHadPickup(false)} className="btn-ghost" style={{flex:1, borderColor: hadPickup===false?"#3DDC97":"#2A3038", color: hadPickup===false?"#3DDC97":"#7C8592"}}>No</button>
+              <button onClick={()=>setHadPickup(true)} className="btn-ghost" style={{flex:1, borderColor: hadPickup===true?"#F5A623":"#2A3038", color: hadPickup===true?"#F5A623":"#7C8592"}}>Yes</button>
             </div>
             {hadPickup && (
-              <input type="number" value={pickupInput} onChange={(e)=>setPickupInput(e.target.value)} placeholder="Kitni pickup laaye" className="input font-mono"/>
+              <input type="number" value={pickupInput} onChange={(e)=>setPickupInput(e.target.value)} placeholder="How many pickups did you bring" className="input font-mono"/>
             )}
 
             <button onClick={confirmClose} disabled={hadReturns===null || hadPickup===null} className="btn-primary">Confirm & Close</button>
@@ -570,7 +626,7 @@ function MileageTab({ user, isAdmin, riders, odometer, riderName }) {
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       {isAdmin && (
         <select value={viewRiderId} onChange={(e)=>setViewRiderId(e.target.value)} className="input">
-          <option value="">Rider chuno</option>
+          <option value="">Select rider</option>
           {riders.filter(r=>r.role==="rider").map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
       )}
@@ -599,7 +655,7 @@ function MileageTab({ user, isAdmin, riders, odometer, riderName }) {
       </div>
 
       <div className="card">
-        <div className="section-label">Is Mahine Ka Total</div>
+        <div className="section-label">This Month's Total</div>
         <div className="stat-grid-3">
           <div><div className="font-mono" style={{fontSize:20}}>{monthKm.toFixed(1)}</div><div style={{fontSize:10,color:"#7C8592"}}>TOTAL KM</div></div>
           <div><div className="font-mono" style={{fontSize:20,color:"#F5A623"}}>₹{(monthKm*2.5).toFixed(0)}</div><div style={{fontSize:10,color:"#7C8592"}}>@2.5/KM</div></div>
@@ -608,7 +664,7 @@ function MileageTab({ user, isAdmin, riders, odometer, riderName }) {
       </div>
 
       <div className="list-card">
-        {logs.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>Koi reading nahi hai.</div> :
+        {logs.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No readings yet.</div> :
           logs.slice(0,15).map(o=>{
             const km = kmFor(o);
             return (
@@ -650,14 +706,14 @@ function MyFuelTab({ user, personalFuel }) {
         <StatCard label="Month Spend" value={`₹${monthTotal.toFixed(0)}`} color="#3DDC97"/>
       </div>
       <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
-        <div className="section-label">Aaj Fuel Bharwaya</div>
+        <div className="section-label">Today's Fuel Fill-up</div>
         <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} className="input font-mono"/>
-        <input type="number" value={amount} onChange={(e)=>setAmount(e.target.value)} placeholder="Kitne rupaye ka" className="input font-mono"/>
+        <input type="number" value={amount} onChange={(e)=>setAmount(e.target.value)} placeholder="How much in rupees" className="input font-mono"/>
         <button onClick={submit} disabled={!amount} className="btn-primary">Save</button>
-        <p style={{fontSize:11,color:"#7C8592"}}>Yeh sirf aapka personal record hai, sirf aap hi ise dekh sakte ho.</p>
+        <p style={{fontSize:11,color:"#7C8592"}}>This is your personal record only, visible only to you.</p>
       </div>
       <div className="list-card">
-        {myLogs.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>Koi entry nahi hai.</div> :
+        {myLogs.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No entries yet.</div> :
           myLogs.map(f=>(
             <div key={f.id} className="list-row">
               <div style={{fontSize:13}} className="font-mono">{fmtDate(f.date)}</div>
@@ -727,7 +783,7 @@ function CalendarTab({ holidays, leaves, riders, user, isAdmin, riderName }) {
         <div className="section-label">Riders On Leave This Month</div>
         <div className="list-card">
           {approvedLeaves.filter(l=>l.date.startsWith(`${year}-${String(month+1).padStart(2,"0")}`)).length===0 ? (
-            <div style={{padding:16,fontSize:13,color:"#7C8592"}}>Koi approved leave nahi hai is mahine.</div>
+            <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No approved leave this month.</div>
           ) : approvedLeaves.filter(l=>l.date.startsWith(`${year}-${String(month+1).padStart(2,"0")}`)).sort((a,b)=>a.date>b.date?1:-1).map(l=>(
             <div key={l.id} className="list-row">
               <div style={{fontSize:13,fontWeight:600}}>{riderName(l.riderId)}</div>
@@ -739,7 +795,7 @@ function CalendarTab({ holidays, leaves, riders, user, isAdmin, riderName }) {
 
       {myLeaveDays.length > 0 && (
         <div>
-          <div className="section-label">Aapki Chutti Is Mahine</div>
+          <div className="section-label">Your Leave This Month</div>
           <div className="list-card">
             {myLeaveDays.map(l=>(
               <div key={l.id} className="list-row">
@@ -767,15 +823,15 @@ function AnnouncementsTab({ user, isAdmin, announcements }) {
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       {isAdmin && (
         <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
-          <div className="section-label">Naya Announcement</div>
-          <textarea value={text} onChange={(e)=>setText(e.target.value)} rows={3} placeholder="Message likho..." className="input" style={{resize:"none"}}/>
+          <div className="section-label">New Announcement</div>
+          <textarea value={text} onChange={(e)=>setText(e.target.value)} rows={3} placeholder="Write a message..." className="input" style={{resize:"none"}}/>
           <button onClick={submit} disabled={!text.trim()} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-            <Megaphone size={15}/> Post Karo
+            <Megaphone size={15}/> Post
           </button>
         </div>
       )}
       <div className="list-card">
-        {announcements.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>Koi announcement nahi hai.</div> :
+        {announcements.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No announcements yet.</div> :
           announcements.map(a=>(
             <div key={a.id} className="list-row" style={{alignItems:"flex-start"}}>
               <div>
@@ -806,8 +862,8 @@ function RidersTab({ riders, isFounder }) {
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
-        <div className="section-label">Naya Rider Jodo</div>
-        <input value={name} onChange={(e)=>setName(e.target.value)} placeholder="Rider ka naam" className="input"/>
+        <div className="section-label">Add New Rider</div>
+        <input value={name} onChange={(e)=>setName(e.target.value)} placeholder="Rider's name" className="input"/>
         <input value={phone} onChange={(e)=>setPhone(e.target.value)} placeholder="Phone (optional)" className="input font-mono"/>
         <button onClick={addRider} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><Plus size={15}/> Add Rider</button>
       </div>
@@ -832,7 +888,7 @@ function RidersTab({ riders, isFounder }) {
           </div>
         ))}
       </div>
-      {!isFounder && <p style={{fontSize:11,color:"#7C8592"}}>Sirf Founder role change kar sakta hai.</p>}
+      {!isFounder && <p style={{fontSize:11,color:"#7C8592"}}>Only the Founder can change roles.</p>}
     </div>
   );
 }
@@ -859,14 +915,14 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       <select value={riderId} onChange={(e)=>setRiderId(e.target.value)} className="input">
-        <option value="">Rider chuno</option>
+        <option value="">Select rider</option>
         {riders.filter(x=>x.role==="rider").map(x=><option key={x.id} value={x.id}>{x.name}</option>)}
       </select>
 
       {r && (
         <>
           <div className="card">
-            <div className="section-label">{r.name} — Is Mahine Ka Summary</div>
+            <div className="section-label">{r.name} — This Month's Summary</div>
             <div className="stat-grid">
               <StatCard label="Deliveries" value={monthRounds.reduce((s,x)=>s+x.deliveredFinal,0)} color="#3DDC97"/>
               <StatCard label="Pickups" value={monthRounds.reduce((s,x)=>s+(x.pickupCount||0),0)} color="#F5A623"/>
@@ -894,7 +950,7 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
           <div>
             <div className="section-label">Leave History</div>
             <div className="list-card">
-              {myLeaves.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>Koi leave record nahi.</div> :
+              {myLeaves.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No leave records.</div> :
                 myLeaves.sort((a,b)=>a.date<b.date?1:-1).map(l=>(
                   <div key={l.id} className="list-row">
                     <div style={{fontSize:13}}>{fmtDate(l.date)} · {l.customReason||l.reason}</div>
@@ -908,7 +964,7 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
           <div>
             <div className="section-label">DRS / Round History (this month)</div>
             <div className="list-card">
-              {monthRounds.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>Koi round record nahi.</div> :
+              {monthRounds.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No round records.</div> :
                 monthRounds.sort((a,b)=>a.date<b.date?1:-1).map(round=>(
                   <div key={round.id} className="list-row">
                     <div style={{fontSize:12}} className="font-mono">{fmtDate(round.date)} · R{round.roundNumber} · DRS {round.drsNumber}</div>
@@ -948,7 +1004,7 @@ function AttendanceTab({ user, isAdmin, riders, attendance, leaves }) {
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} className="input font-mono"/>
       <div className="list-card">
-        {visibleRiders.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>Koi rider nahi mila.</div> :
+        {visibleRiders.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No riders found.</div> :
           visibleRiders.map(r=>{
             const current = statusFor(r.id, date)?.status;
             const leave = onLeave(r.id, date);
@@ -956,7 +1012,7 @@ function AttendanceTab({ user, isAdmin, riders, attendance, leaves }) {
               <div key={r.id} style={{padding:"10px 14px",borderBottom:"1px solid #22272E"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                   <span style={{fontSize:13,fontWeight:600}}>{r.name}</span>
-                  {leave && <span className="badge badge-rejected">chutti par</span>}
+                  {leave && <span className="badge badge-rejected">on leave</span>}
                 </div>
                 {isAdmin ? (
                   <div style={{display:"flex",gap:6}}>
@@ -1012,7 +1068,7 @@ function AdminFuelTab({ riders, adminFuel, riderName }) {
       <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
         <div className="section-label">Company Fuel Entry (Admin Only)</div>
         <select value={riderId} onChange={(e)=>setRiderId(e.target.value)} className="input">
-          <option value="">Rider chuno</option>
+          <option value="">Select rider</option>
           {riders.filter(r=>r.role==="rider").map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
         <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} className="input font-mono"/>
@@ -1024,7 +1080,7 @@ function AdminFuelTab({ riders, adminFuel, riderName }) {
         <button onClick={submit} disabled={!riderId||!liters||!amount} className="btn-primary">Save Entry</button>
       </div>
       <div className="list-card">
-        {adminFuel.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>Koi entry nahi hai.</div> :
+        {adminFuel.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No entries yet.</div> :
           adminFuel.map(f=>(
             <div key={f.id} className="list-row">
               <div>
