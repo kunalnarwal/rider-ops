@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 * { box-sizing: border-box; }
+button { color: inherit; font-family: inherit; }
 html, body, #root { height: 100%; margin: 0; }
 body {
   background: #14181D;
