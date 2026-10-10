@@ -1,16 +1,65 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { db, setupNotifications } from "./firebase";
 import {
-  collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, query, orderBy, serverTimestamp,
+  collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, query, orderBy, serverTimestamp, setDoc,
 } from "firebase/firestore";
 import {
   Users, CalendarOff, ClipboardCheck, Fuel, Plus, Trash2, AlertTriangle, Clock,
   Package, Gauge, CalendarDays, LogOut, ShieldCheck, Megaphone, Sun, Sunset, Moon,
-  Check, X as XIcon, Play, Square, FileText, Bell, BellRing, Pencil,
+  Check, X as XIcon, Play, Square, FileText, Bell, BellRing, Pencil, ScanLine, Moon as MoonIcon, Timer,
 } from "lucide-react";
 
 const REASON_OPTIONS = ["Marriage", "Personal", "Fever", "Other"];
 const RATES = [2.5, 2.75];
+
+function festivalSeedForYear(year) {
+  return [
+    { date: `${year}-01-01`, name: "New Year's Day" },
+    { date: `${year}-01-14`, name: "Makar Sankranti / Pongal" },
+    { date: `${year}-01-26`, name: "Republic Day" },
+    { date: `${year}-02-15`, name: "Maha Shivratri" },
+    { date: `${year}-03-04`, name: "Holi" },
+    { date: `${year}-03-20`, name: "Eid-ul-Fitr" },
+    { date: `${year}-03-26`, name: "Ram Navami" },
+    { date: `${year}-03-29`, name: "Gudi Padwa / Ugadi (Hindu Nav Varsh)" },
+    { date: `${year}-04-03`, name: "Good Friday" },
+    { date: `${year}-04-14`, name: "Dr. Ambedkar Jayanti" },
+    { date: `${year}-05-01`, name: "Labour Day" },
+    { date: `${year}-05-27`, name: "Eid-ul-Adha (Bakrid)" },
+    { date: `${year}-06-16`, name: "Muharram" },
+    { date: `${year}-08-15`, name: "Independence Day" },
+    { date: `${year}-08-28`, name: "Raksha Bandhan" },
+    { date: `${year}-09-04`, name: "Janmashtami" },
+    { date: `${year}-09-14`, name: "Ganesh Chaturthi" },
+    { date: `${year}-10-02`, name: "Gandhi Jayanti" },
+    { date: `${year}-10-11`, name: "Navratri Begins" },
+    { date: `${year}-10-20`, name: "Dussehra" },
+    { date: `${year}-11-08`, name: "Diwali" },
+    { date: `${year}-11-10`, name: "Bhai Dooj" },
+    { date: `${year}-11-24`, name: "Guru Nanak Jayanti" },
+    { date: `${year}-12-25`, name: "Christmas" },
+  ];
+}
+function vikramSamvat(gregYear, month) { return month < 3 ? gregYear + 56 : gregYear + 57; }
+function sakaSamvat(gregYear, month) { return month < 3 ? gregYear - 79 : gregYear - 78; }
+
+function distanceMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+function getCurrentPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error("Geolocation not supported")); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (err) => reject(err),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+}
 
 function todayISO() { const d = new Date(); d.setHours(0,0,0,0); return d.toISOString().slice(0,10); }
 function addDaysISO(iso, n) { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
@@ -45,6 +94,7 @@ function useCollection(name, sortField) {
 const addRec = (col, data) => addDoc(collection(db, col), data);
 const updateRec = (col, id, data) => updateDoc(doc(db, col, id), data);
 const deleteRec = (col, id) => deleteDoc(doc(db, col, id));
+const setRec = (col, id, data) => setDoc(doc(db, col, id), data);
 
 const TABS = [
   { id: "home", label: "Home", icon: Clock },
@@ -54,6 +104,7 @@ const TABS = [
   { id: "myfuel", label: "My Fuel", icon: Fuel },
   { id: "attendance", label: "Attendance", icon: ClipboardCheck },
   { id: "calendar", label: "Calendar", icon: CalendarDays },
+  { id: "panchang", label: "Panchang", icon: MoonIcon },
   { id: "announcements", label: "News", icon: Megaphone },
   { id: "adminfuel", label: "Company Fuel", icon: Fuel, adminOnly: true },
   { id: "riders", label: "Riders", icon: Users, adminOnly: true },
@@ -66,6 +117,8 @@ export default function App() {
   });
   const [tab, setTab] = useState("home");
   const [editingProfile, setEditingProfile] = useState(false);
+  const [showUnseenAnnouncements, setShowUnseenAnnouncements] = useState(false);
+  const [unseenList, setUnseenList] = useState([]);
 
   const [riders, ridersLoading] = useCollection("riders");
   const [leaves] = useCollection("leaves");
@@ -77,12 +130,43 @@ export default function App() {
   const [holidays] = useCollection("holidays");
   const [announcements] = useCollection("announcements", "createdAtMs");
   const [duty] = useCollection("duty");
+  const [lateNotices] = useCollection("lateNotices");
+  const [settings] = useCollection("settings");
+  const officeSetting = settings.find((s) => s.id === "office" || s.type === "office");
 
   useEffect(() => {
     if (!ridersLoading && riders.length === 0) {
       addRec("riders", { name: "Founder", phone: "", role: "founder", pin: "1234" });
     }
   }, [ridersLoading, riders.length]);
+
+  useEffect(() => {
+    if (!user || announcements.length === 0) return;
+    const lastSeen = Number(localStorage.getItem("riderops_lastSeenAnn") || 0);
+    const unseen = announcements.filter((a) => (a.createdAtMs || 0) > lastSeen);
+    if (unseen.length > 0) {
+      setUnseenList(unseen);
+      setShowUnseenAnnouncements(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, announcements.length]);
+
+  const dismissAnnouncements = () => {
+    const latest = Math.max(0, ...announcements.map((a) => a.createdAtMs || 0));
+    localStorage.setItem("riderops_lastSeenAnn", String(latest));
+    setShowUnseenAnnouncements(false);
+  };
+
+  useEffect(() => {
+    const year = new Date().getFullYear();
+    const alreadySeeded = holidays.some((h) => h.seedYear === year);
+    if (!alreadySeeded && holidays.length >= 0) {
+      const existingDates = new Set(holidays.map((h) => h.date));
+      const toAdd = festivalSeedForYear(year).filter((f) => !existingDates.has(f.date));
+      toAdd.forEach((f) => addRec("holidays", { ...f, seedYear: year, source: "auto" }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holidays.length]);
 
   const login = (u) => {
     setUser(u);
@@ -144,22 +228,46 @@ export default function App() {
 
       <main style={{padding:"16px",paddingBottom:40,maxWidth:640,margin:"0 auto"}}>
         {tab==="home" && <HomeTab user={user} isAdmin={isAdmin} riders={riders} leaves={leaves} rounds={rounds}
-          duty={duty} attendance={attendance} isHoliday={isHoliday} setTab={setTab} riderName={riderName}/>}
+          duty={duty} attendance={attendance} isHoliday={isHoliday} setTab={setTab} riderName={riderName}
+          lateNotices={lateNotices} officeSetting={officeSetting}/>}
         {tab==="leave" && <LeaveTab user={user} isAdmin={isAdmin} riders={riders} leaves={leaves} riderName={riderName} isHoliday={isHoliday}/>}
         {tab==="rounds" && <RoundsTab user={user} isAdmin={isAdmin} riders={riders} rounds={rounds} riderName={riderName}/>}
         {tab==="mileage" && <MileageTab user={user} isAdmin={isAdmin} riders={riders} odometer={odometer} riderName={riderName}/>}
         {tab==="myfuel" && <MyFuelTab user={user} personalFuel={personalFuel}/>}
         {tab==="attendance" && <AttendanceTab user={user} isAdmin={isAdmin} riders={riders} attendance={attendance} leaves={leaves}/>}
         {tab==="calendar" && <CalendarTab holidays={holidays} leaves={leaves} riders={riders} user={user} isAdmin={isAdmin} riderName={riderName}/>}
+        {tab==="panchang" && <PanchangTab/>}
         {tab==="announcements" && <AnnouncementsTab user={user} isAdmin={isAdmin} announcements={announcements}/>}
         {tab==="adminfuel" && isAdmin && <AdminFuelTab riders={riders} adminFuel={adminFuel} riderName={riderName}/>}
-        {tab==="riders" && isAdmin && <RidersTab riders={riders} isFounder={isFounder}/>}
+        {tab==="riders" && isAdmin && <RidersTab riders={riders} isFounder={isFounder} officeSetting={officeSetting}/>}
         {tab==="reports" && isAdmin && <ReportsTab riders={riders} leaves={leaves} rounds={rounds} odometer={odometer}
-          adminFuel={adminFuel} personalFuel={personalFuel} attendance={attendance} riderName={riderName}/>}
+          adminFuel={adminFuel} personalFuel={personalFuel} attendance={attendance} riderName={riderName} duty={duty}/>}
       </main>
 
       {editingProfile && (
         <EditProfileModal user={user} riders={riders} onSave={saveProfile} onClose={()=>setEditingProfile(false)} />
+      )}
+
+      {showUnseenAnnouncements && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,zIndex:70}}>
+          <div className="card" style={{maxWidth:360,width:"100%",display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <Megaphone size={18} color="#F5A623"/>
+              <div className="font-display" style={{fontSize:16,fontWeight:700,color:"#F5A623"}}>
+                New Announcement{unseenList.length>1?"s":""}
+              </div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:300,overflowY:"auto"}}>
+              {unseenList.map((a)=>(
+                <div key={a.id} style={{background:"#101317",border:"1px solid #2A3038",borderRadius:8,padding:10}}>
+                  <div style={{fontSize:13}}>{a.text}</div>
+                  <div style={{fontSize:10,color:"#5B6270",marginTop:4}} className="font-mono">— {a.createdBy} · {new Date(a.createdAtMs).toLocaleDateString("en-IN")}</div>
+                </div>
+              ))}
+            </div>
+            <button onClick={dismissAnnouncements} className="btn-primary">Got It</button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -225,7 +333,6 @@ function LoginScreen({ riders, onLogin }) {
   const { text, Icon, color } = greeting();
 
   const tryLogin = (r) => {
-    if (r.role === "rider") { onLogin({ id: r.id, name: r.name, role: r.role }); return; }
     setPinFor(r); setPin(""); setErr("");
   };
   const confirmPin = () => {
@@ -266,8 +373,21 @@ function LoginScreen({ riders, onLogin }) {
   );
 }
 
-function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHoliday, setTab, riderName }) {
+function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHoliday, setTab, riderName, lateNotices, officeSetting }) {
   const today = todayISO();
+  const [locError, setLocError] = useState("");
+  const [checkingLoc, setCheckingLoc] = useState(false);
+  const tomorrow0 = addDaysISO(today, 1);
+  const [showLateForm, setShowLateForm] = useState(false);
+  const [lateDate, setLateDate] = useState(tomorrow0);
+  const [lateFrom, setLateFrom] = useState("");
+  const [lateTo, setLateTo] = useState("");
+  const submitLate = async () => {
+    if (!lateFrom || !lateTo) return;
+    await addRec("lateNotices", { riderId: user.id, date: lateDate, fromTime: lateFrom, toTime: lateTo, createdAtMs: Date.now() });
+    setShowLateForm(false); setLateFrom(""); setLateTo("");
+  };
+  const lateTomorrow = lateNotices.filter((n) => n.date === tomorrow0);
   const [notifStatus, setNotifStatus] = useState(
     typeof Notification !== "undefined" ? Notification.permission : "unsupported"
   );
@@ -284,7 +404,28 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
     }
   }, [myDuty]);
 
-  const startDuty = () => addRec("duty", { riderId: user.id, date: today, startTime: Date.now(), endTime: null });
+  const startDuty = async () => {
+    setLocError("");
+    if (officeSetting?.lat != null) {
+      setCheckingLoc(true);
+      try {
+        const pos = await getCurrentPosition();
+        const dist = distanceMeters(pos.lat, pos.lng, officeSetting.lat, officeSetting.lng);
+        const radius = officeSetting.radius || 200;
+        if (dist > radius) {
+          setCheckingLoc(false);
+          setLocError(`You're ${Math.round(dist)}m from the office — must be within ${radius}m to start duty.`);
+          return;
+        }
+      } catch (e) {
+        setCheckingLoc(false);
+        setLocError("Couldn't verify your location. Please enable location access and try again.");
+        return;
+      }
+      setCheckingLoc(false);
+    }
+    addRec("duty", { riderId: user.id, date: today, startTime: Date.now(), endTime: null });
+  };
   const endDuty = () => updateRec("duty", myDuty.id, { endTime: Date.now() });
 
   const myRoundsToday = rounds.filter((r) => r.riderId === user.id && r.date === today);
@@ -328,9 +469,13 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
           ) : myDuty && myDuty.endTime ? (
             <p style={{fontSize:14,color:"#7C8592"}}>Duty completed today — worked {fmtHours(myDuty.endTime-myDuty.startTime)}.</p>
           ) : (
-            <button onClick={startDuty} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-              <Play size={14}/> Start Duty
-            </button>
+            <>
+              <button onClick={startDuty} disabled={checkingLoc} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                <Play size={14}/> {checkingLoc ? "Checking location…" : "Start Duty"}
+              </button>
+              {locError && <p style={{fontSize:11,color:"#E5484D",marginTop:8}}>{locError}</p>}
+              {officeSetting?.lat != null && <p style={{fontSize:10,color:"#5B6270",marginTop:6}}>Must be within {officeSetting.radius || 200}m of the office to start duty.</p>}
+            </>
           )}
         </div>
       )}
@@ -364,6 +509,42 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
         </div>
       )}
 
+      {lateTomorrow.length > 0 && (
+        <div className="card" style={{borderColor:"rgba(138,165,255,0.4)",background:"rgba(138,165,255,0.08)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+            <Timer size={15} color="#8AA5FF"/>
+            <span className="font-display" style={{fontSize:13,fontWeight:700,color:"#8AA5FF"}}>LATE TOMORROW</span>
+          </div>
+          {lateTomorrow.map((n) => (
+            <div key={n.id} style={{fontSize:13}}><b>{riderName(n.riderId)}</b> — {n.fromTime} to {n.toTime}</div>
+          ))}
+        </div>
+      )}
+
+      {!isAdmin && !showLateForm && (
+        <button onClick={()=>setShowLateForm(true)} className="btn-ghost" style={{width:"100%",padding:10,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+          <Timer size={14}/> I'll Be Late Tomorrow
+        </button>
+      )}
+      {showLateForm && (
+        <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div className="section-label">Report Late Arrival</div>
+          <input type="date" value={lateDate} min={today} onChange={(e)=>setLateDate(e.target.value)} className="input font-mono"/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div>
+              <label style={{fontSize:10,color:"#7C8592",textTransform:"uppercase"}}>From</label>
+              <input type="time" value={lateFrom} onChange={(e)=>setLateFrom(e.target.value)} className="input font-mono" style={{marginTop:4}}/>
+            </div>
+            <div>
+              <label style={{fontSize:10,color:"#7C8592",textTransform:"uppercase"}}>To</label>
+              <input type="time" value={lateTo} onChange={(e)=>setLateTo(e.target.value)} className="input font-mono" style={{marginTop:4}}/>
+            </div>
+          </div>
+          <button onClick={submitLate} disabled={!lateFrom||!lateTo} className="btn-primary">Submit — Visible to All Riders</button>
+          <button onClick={()=>setShowLateForm(false)} style={{background:"none",border:"none",color:"#7C8592",fontSize:12,cursor:"pointer"}}>Cancel</button>
+        </div>
+      )}
+
       {isAdmin && (
         <div className="stat-grid">
           <StatCard label="Total Riders" value={riders.filter(r=>r.role==="rider").length} color="#3DDC97"/>
@@ -389,14 +570,18 @@ function LeaveTab({ user, isAdmin, riders, leaves, riderName, isHoliday }) {
   const [reason, setReason] = useState(REASON_OPTIONS[0]);
   const [customReason, setCustomReason] = useState("");
   const [halfDay, setHalfDay] = useState(false);
+  const [halfDayPeriod, setHalfDayPeriod] = useState("Morning");
+  const [halfDayFrom, setHalfDayFrom] = useState("");
+  const [halfDayTo, setHalfDayTo] = useState("");
 
   const submit = async () => {
     if (reason === "Other" && !customReason.trim()) return;
     await addRec("leaves", {
       riderId: user.id, date, reason, customReason: reason==="Other"?customReason.trim():"",
-      halfDay, status: "pending", createdAtMs: Date.now(),
+      halfDay, halfDayPeriod: halfDay?halfDayPeriod:"", halfDayFrom: halfDay?halfDayFrom:"", halfDayTo: halfDay?halfDayTo:"",
+      status: "pending", createdAtMs: Date.now(),
     });
-    setCustomReason(""); setHalfDay(false);
+    setCustomReason(""); setHalfDay(false); setHalfDayFrom(""); setHalfDayTo("");
   };
   const decide = (id, status) => updateRec("leaves", id, { status, decidedBy: user.name });
   const remove = (id) => deleteRec("leaves", id);
@@ -415,8 +600,26 @@ function LeaveTab({ user, isAdmin, riders, leaves, riderName, isHoliday }) {
         </select>
         {reason==="Other" && <input value={customReason} onChange={(e)=>setCustomReason(e.target.value)} placeholder="Enter your reason" className="input"/>}
         <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#B9C0CA"}}>
-          <input type="checkbox" checked={halfDay} onChange={(e)=>setHalfDay(e.target.checked)}/> Half-day / will be late
+          <input type="checkbox" checked={halfDay} onChange={(e)=>setHalfDay(e.target.checked)}/> Half-day (specify time below)
         </label>
+        {halfDay && (
+          <div style={{display:"flex",flexDirection:"column",gap:8,paddingLeft:4,borderLeft:"2px solid #2A3038"}}>
+            <select value={halfDayPeriod} onChange={(e)=>setHalfDayPeriod(e.target.value)} className="input">
+              <option value="Morning">Morning</option>
+              <option value="Evening">Evening</option>
+            </select>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div>
+                <label style={{fontSize:10,color:"#7C8592",textTransform:"uppercase"}}>From</label>
+                <input type="time" value={halfDayFrom} onChange={(e)=>setHalfDayFrom(e.target.value)} className="input font-mono" style={{marginTop:4}}/>
+              </div>
+              <div>
+                <label style={{fontSize:10,color:"#7C8592",textTransform:"uppercase"}}>To</label>
+                <input type="time" value={halfDayTo} onChange={(e)=>setHalfDayTo(e.target.value)} className="input font-mono" style={{marginTop:4}}/>
+              </div>
+            </div>
+          </div>
+        )}
         <button onClick={submit} disabled={reason==="Other" && !customReason.trim()} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
           <Plus size={15}/> Submit Request
         </button>
@@ -436,6 +639,9 @@ function LeaveTab({ user, isAdmin, riders, leaves, riderName, isHoliday }) {
                     {l.halfDay && <span className="badge badge-pending">half-day</span>}
                   </div>
                   <div style={{fontSize:11,color:"#7C8592"}}>{fmtDate(l.date)} · {l.customReason || l.reason}</div>
+                  {l.halfDay && l.halfDayFrom && (
+                    <div style={{fontSize:10,color:"#8AA5FF"}} className="font-mono">{l.halfDayPeriod}: {l.halfDayFrom} – {l.halfDayTo}</div>
+                  )}
                 </div>
                 <div style={{display:"flex",gap:6,flexShrink:0}}>
                   {isAdmin && l.status==="pending" && (
@@ -467,6 +673,7 @@ function RoundsTab({ user, isAdmin, riders, rounds, riderName }) {
   const [hadReturns, setHadReturns] = useState(null);
   const [hadPickup, setHadPickup] = useState(null);
   const [pickupInput, setPickupInput] = useState("");
+  const [scanning, setScanning] = useState(false);
 
   const targetId = isAdmin ? viewRiderId : user.id;
   const myRoundsToday = useMemo(()=> rounds.filter(r=>r.riderId===targetId && r.date===date).sort((a,b)=>a.roundNumber-b.roundNumber), [rounds, targetId, date]);
@@ -526,7 +733,12 @@ function RoundsTab({ user, isAdmin, riders, rounds, riderName }) {
       {canAddNew ? (
         <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
           <div className="section-label">Start Round {myRoundsToday.length+1}</div>
-          <input value={drs} onChange={(e)=>setDrs(e.target.value)} placeholder="DRS Number (mandatory)" className="input"/>
+          <div style={{display:"flex",gap:8}}>
+            <input value={drs} onChange={(e)=>setDrs(e.target.value)} placeholder="DRS Number (mandatory)" className="input" style={{flex:1}}/>
+            <button onClick={()=>setScanning(true)} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
+              <ScanLine size={14}/> Scan
+            </button>
+          </div>
           <input type="number" value={deliveryCount} onChange={(e)=>setDeliveryCount(e.target.value)} placeholder="How many parcels are you taking" className="input font-mono"/>
           <button onClick={startRound} disabled={!drs.trim() || !deliveryCount} className="btn-primary">Start Round</button>
         </div>
@@ -549,7 +761,14 @@ function RoundsTab({ user, isAdmin, riders, rounds, riderName }) {
                     Out: {r.deliveryCount} {r.closed ? `· Delivered: ${r.deliveredFinal} · Returned: ${r.returnedCount} · Pickup: ${r.pickupCount}` : "· Pending closure"}
                   </div>
                 </div>
-                {!r.closed && <span className="badge badge-pending">open</span>}
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  {!r.closed && <span className="badge badge-pending">open</span>}
+                  {isAdmin && (
+                    <button onClick={()=>deleteRec("rounds", r.id)} style={{background:"none",border:"none",color:"#7C8592",cursor:"pointer"}}>
+                      <Trash2 size={13}/>
+                    </button>
+                  )}
+                </div>
               </div>
             ))
           }
@@ -593,6 +812,61 @@ function RoundsTab({ user, isAdmin, riders, rounds, riderName }) {
             <button onClick={()=>setClosingRound(null)} style={{background:"none",border:"none",color:"#7C8592",fontSize:12,cursor:"pointer"}}>Cancel</button>
           </div>
         </div>
+      )}
+
+      {scanning && (
+        <BarcodeScanModal onDetect={(val)=>{ setDrs(val); setScanning(false); }} onClose={()=>setScanning(false)} />
+      )}
+    </div>
+  );
+}
+
+function BarcodeScanModal({ onDetect, onClose }) {
+  const videoRef = useRef(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let stream, raf, stopped = false, detector;
+    (async () => {
+      if (!("BarcodeDetector" in window)) {
+        setError("Barcode scanning isn't supported on this browser/device. Please type the DRS number manually.");
+        return;
+      }
+      try {
+        detector = new window.BarcodeDetector();
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        if (stopped) { stream.getTracks().forEach(t=>t.stop()); return; }
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        const tick = async () => {
+          if (stopped) return;
+          try {
+            const codes = await detector.detect(videoRef.current);
+            if (codes.length > 0) { onDetect(codes[0].rawValue); return; }
+          } catch {}
+          raf = requestAnimationFrame(tick);
+        };
+        tick();
+      } catch (e) {
+        setError("Camera access denied or unavailable. Please type the DRS number manually.");
+      }
+    })();
+    return () => { stopped = true; if (raf) cancelAnimationFrame(raf); if (stream) stream.getTracks().forEach(t=>t.stop()); };
+  }, []);
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:60,padding:20}}>
+      {error ? (
+        <div className="card" style={{maxWidth:320,textAlign:"center"}}>
+          <p style={{fontSize:13,color:"#E5484D",marginBottom:12}}>{error}</p>
+          <button onClick={onClose} className="btn-primary">Close</button>
+        </div>
+      ) : (
+        <>
+          <video ref={videoRef} style={{width:"100%",maxWidth:360,borderRadius:12}} muted playsInline/>
+          <p style={{color:"#B9C0CA",fontSize:12,marginTop:12}}>Point camera at the barcode</p>
+          <button onClick={onClose} className="btn-ghost" style={{marginTop:12}}>Cancel</button>
+        </>
       )}
     </div>
   );
@@ -731,6 +1005,8 @@ function MyFuelTab({ user, personalFuel }) {
 
 function CalendarTab({ holidays, leaves, riders, user, isAdmin, riderName }) {
   const [monthOffset, setMonthOffset] = useState(0);
+  const [newHolDate, setNewHolDate] = useState(todayISO());
+  const [newHolName, setNewHolName] = useState("");
   const base = new Date();
   base.setMonth(base.getMonth() + monthOffset);
   const year = base.getFullYear(), month = base.getMonth();
@@ -746,8 +1022,22 @@ function CalendarTab({ holidays, leaves, riders, user, isAdmin, riderName }) {
 
   const myLeaveDays = approvedLeaves.filter(l=>l.riderId===user.id && l.date.startsWith(`${year}-${String(month+1).padStart(2,"0")}`));
 
+  const monthHolidays = holidays.filter(h=>h.date.startsWith(`${year}-${String(month+1).padStart(2,"0")}`)).sort((a,b)=>a.date>b.date?1:-1);
+
+  const addHoliday = async () => {
+    if (!newHolName.trim()) return;
+    await addRec("holidays", { date: newHolDate, name: newHolName.trim(), source: "custom" });
+    setNewHolName("");
+  };
+  const removeHoliday = (id) => deleteRec("holidays", id);
+
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div className="card" style={{textAlign:"center",padding:"10px 14px"}}>
+        <div style={{fontSize:10,color:"#7C8592",textTransform:"uppercase",letterSpacing:"0.08em"}}>Today</div>
+        <div className="font-display" style={{fontSize:18,fontWeight:700,color:"#F5A623"}}>{fmtDate(todayISO())}</div>
+      </div>
+
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <button onClick={()=>setMonthOffset(m=>m-1)} className="btn-ghost">← Prev</button>
         <div className="font-display" style={{fontWeight:700,fontSize:16}}>{monthLabel}</div>
@@ -806,6 +1096,63 @@ function CalendarTab({ holidays, leaves, riders, user, isAdmin, riderName }) {
           </div>
         </div>
       )}
+
+      <div>
+        <div className="section-label">Festivals & Holidays This Month</div>
+        <div className="list-card">
+          {monthHolidays.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No festivals listed this month.</div> :
+            monthHolidays.map(h=>(
+              <div key={h.id} className="list-row">
+                <div style={{fontSize:13}}>{h.name}</div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span className="font-mono" style={{fontSize:12,color:"#3DDC97"}}>{fmtDate(h.date)}</span>
+                  {isAdmin && <button onClick={()=>removeHoliday(h.id)} style={{background:"none",border:"none",color:"#7C8592",cursor:"pointer"}}><Trash2 size={13}/></button>}
+                </div>
+              </div>
+            ))
+          }
+        </div>
+        <p style={{fontSize:10,color:"#5B6270",marginTop:6}}>Lunar festival dates (Holi, Diwali, Eid etc.) are approximate — admin can edit or add dates below.</p>
+      </div>
+
+      {isAdmin && (
+        <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div className="section-label">Add Festival / Holiday</div>
+          <input type="date" value={newHolDate} onChange={(e)=>setNewHolDate(e.target.value)} className="input font-mono"/>
+          <input value={newHolName} onChange={(e)=>setNewHolName(e.target.value)} placeholder="Name (e.g. Diwali, Office Closed)" className="input"/>
+          <button onClick={addHoliday} disabled={!newHolName.trim()} className="btn-primary">Add Holiday</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PanchangTab() {
+  const today = new Date();
+  const vs = vikramSamvat(today.getFullYear(), today.getMonth());
+  const ss = sakaSamvat(today.getFullYear(), today.getMonth());
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div className="card" style={{textAlign:"center"}}>
+        <MoonIcon size={22} color="#8AA5FF" style={{marginBottom:6}}/>
+        <div className="font-display" style={{fontSize:16,fontWeight:700}}>Hindu Calendar Year</div>
+        <div style={{display:"flex",justifyContent:"center",gap:24,marginTop:10}}>
+          <div>
+            <div className="font-mono" style={{fontSize:22,color:"#F5A623"}}>{vs}</div>
+            <div style={{fontSize:10,color:"#7C8592"}}>VIKRAM SAMVAT</div>
+          </div>
+          <div>
+            <div className="font-mono" style={{fontSize:22,color:"#3DDC97"}}>{ss}</div>
+            <div style={{fontSize:10,color:"#7C8592"}}>SAKA SAMVAT</div>
+          </div>
+        </div>
+      </div>
+      <div className="card" style={{fontSize:12,color:"#B9C0CA",lineHeight:1.6}}>
+        Exact daily tithi, nakshatra and muhurat need precise lunar-position data from a
+        dedicated panchang source, so this app doesn't calculate them. Major Hindu festival
+        dates (Diwali, Holi, Navratri, Hindu Nav Varsh, etc.) are listed on the Calendar tab
+        instead — check a local panchang or app for exact daily tithi.
+      </div>
     </div>
   );
 }
@@ -847,26 +1194,46 @@ function AnnouncementsTab({ user, isAdmin, announcements }) {
   );
 }
 
-function RidersTab({ riders, isFounder }) {
+function RidersTab({ riders, isFounder, officeSetting }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [pin, setPin] = useState("");
+  const [radius, setRadius] = useState(officeSetting?.radius || 200);
+  const [settingLoc, setSettingLoc] = useState(false);
+  const [locMsg, setLocMsg] = useState("");
 
   const addRider = async () => {
-    if (!name.trim()) return;
-    await addRec("riders", { name: name.trim(), phone: phone.trim(), role: "rider", pin: "" });
-    setName(""); setPhone("");
+    if (!name.trim() || pin.trim().length < 4) return;
+    await addRec("riders", { name: name.trim(), phone: phone.trim(), role: "rider", pin: pin.trim() });
+    setName(""); setPhone(""); setPin("");
+  };
+
+  const setOfficeHere = async () => {
+    setSettingLoc(true); setLocMsg("");
+    try {
+      const pos = await getCurrentPosition();
+      await setRec("settings", "office", { type: "office", lat: pos.lat, lng: pos.lng, radius: Number(radius) || 200 });
+      setLocMsg("Office location saved at your current spot.");
+    } catch {
+      setLocMsg("Couldn't get your location — check location permission.");
+    }
+    setSettingLoc(false);
   };
   const remove = (id) => deleteRec("riders", id);
   const setRole = (id, role) => updateRec("riders", id, { role, pin: role==="rider" ? "" : "1234" });
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
-        <div className="section-label">Add New Rider</div>
-        <input value={name} onChange={(e)=>setName(e.target.value)} placeholder="Rider's name" className="input"/>
-        <input value={phone} onChange={(e)=>setPhone(e.target.value)} placeholder="Phone (optional)" className="input font-mono"/>
-        <button onClick={addRider} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><Plus size={15}/> Add Rider</button>
-      </div>
+      {isFounder && (
+        <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div className="section-label">Add New Rider</div>
+          <input value={name} onChange={(e)=>setName(e.target.value)} placeholder="Rider's name" className="input"/>
+          <input value={phone} onChange={(e)=>setPhone(e.target.value)} placeholder="Phone (optional)" className="input font-mono"/>
+          <input value={pin} onChange={(e)=>setPin(e.target.value)} placeholder="4-digit PIN for this rider" className="input font-mono"/>
+          <button onClick={addRider} disabled={!name.trim() || pin.trim().length<4} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><Plus size={15}/> Add Rider</button>
+          <p style={{fontSize:11,color:"#7C8592"}}>Rider logs in with their name + this PIN — only they (or Admin/Founder) can access their account.</p>
+        </div>
+      )}
       <div className="list-card">
         {riders.map(r=>(
           <div key={r.id} className="list-row">
@@ -874,7 +1241,7 @@ function RidersTab({ riders, isFounder }) {
               <div style={{fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
                 {r.name} <span className="badge badge-pending">{r.role}</span>
               </div>
-              <div style={{fontSize:11,color:"#7C8592"}} className="font-mono">{r.phone || "—"}{r.role!=="rider" ? ` · PIN: ${r.pin || "1234"}` : ""}</div>
+              <div style={{fontSize:11,color:"#7C8592"}} className="font-mono">{r.phone || "—"} · PIN: {r.pin || "—"}</div>
             </div>
             <div style={{display:"flex",gap:6,alignItems:"center"}}>
               {isFounder && r.role !== "founder" && (
@@ -888,12 +1255,30 @@ function RidersTab({ riders, isFounder }) {
           </div>
         ))}
       </div>
-      {!isFounder && <p style={{fontSize:11,color:"#7C8592"}}>Only the Founder can change roles.</p>}
+      {!isFounder && <p style={{fontSize:11,color:"#7C8592"}}>Only the Founder can change roles or add riders.</p>}
+
+      {isFounder && (
+        <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div className="section-label">Office Location (for attendance geofence)</div>
+          {officeSetting?.lat != null && (
+            <p style={{fontSize:12,color:"#3DDC97"}}>Office set · radius {officeSetting.radius || 200}m</p>
+          )}
+          <div>
+            <label style={{fontSize:10,color:"#7C8592",textTransform:"uppercase"}}>Radius (meters)</label>
+            <input type="number" value={radius} onChange={(e)=>setRadius(e.target.value)} className="input font-mono" style={{marginTop:4}}/>
+          </div>
+          <button onClick={setOfficeHere} disabled={settingLoc} className="btn-primary">
+            {settingLoc ? "Getting location…" : "Set Office to My Current Location"}
+          </button>
+          {locMsg && <p style={{fontSize:11,color:"#B9C0CA"}}>{locMsg}</p>}
+          <p style={{fontSize:10,color:"#5B6270"}}>Stand at the office, then tap the button above. Riders will only be able to Start Duty within this radius.</p>
+        </div>
+      )}
     </div>
   );
 }
 
-function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel, attendance, riderName }) {
+function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel, attendance, riderName, duty }) {
   const [riderId, setRiderId] = useState(riders.find(r=>r.role==="rider")?.id || "");
   const r = riders.find(x=>x.id===riderId);
   const thisMonth = monthKey(todayISO());
@@ -911,6 +1296,8 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
   const myAttendance = attendance.filter(a=>a.riderId===riderId);
   const monthAttendance = myAttendance.filter(a=>monthKey(a.date)===thisMonth);
   const presentCount = monthAttendance.filter(a=>a.status==="present").length;
+  const myDuty = duty.filter(d=>d.riderId===riderId && monthKey(d.date)===thisMonth).sort((a,b)=>a.date<b.date?1:-1);
+  const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) : "—";
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -955,6 +1342,20 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
                   <div key={l.id} className="list-row">
                     <div style={{fontSize:13}}>{fmtDate(l.date)} · {l.customReason||l.reason}</div>
                     <span className={`badge ${l.status==="approved"?"badge-approved":l.status==="rejected"?"badge-rejected":"badge-pending"}`}>{l.status}</span>
+                  </div>
+                ))
+              }
+            </div>
+          </div>
+
+          <div>
+            <div className="section-label">Duty Times (this month)</div>
+            <div className="list-card">
+              {myDuty.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No duty records.</div> :
+                myDuty.map(d=>(
+                  <div key={d.id} className="list-row">
+                    <div style={{fontSize:12}} className="font-mono">{fmtDate(d.date)}</div>
+                    <div style={{fontSize:12}} className="font-mono">In: {fmtTime(d.startTime)} · Out: {fmtTime(d.endTime)}</div>
                   </div>
                 ))
               }
