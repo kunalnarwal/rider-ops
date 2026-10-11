@@ -832,7 +832,9 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const [returnedInput, setReturnedInput] = useState("");
   const [hadReturns, setHadReturns] = useState(null); // true/false
   const [hadPickup, setHadPickup] = useState(null);
-  const [pickupInput, setPickupInput] = useState("");\n  const [selectedPickupClients, setSelectedPickupClients] = useState([]);\n  const [pickupQuantities, setPickupQuantities] = useState({});
+  const [pickupInput, setPickupInput] = useState("");
+  const [selectedPickupClients, setSelectedPickupClients] = useState([]);
+  const [pickupQuantities, setPickupQuantities] = useState({});
   const [scanning, setScanning] = useState(false);
 
   const targetId = isAdmin ? viewRiderId : user.id;
@@ -1622,7 +1624,8 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
     });
     return Object.values(byDate).sort((a,b)=>a.date<b.date?1:-1);
   }, [monthRounds, myDuty]);
-  const monthTotalDelivered = dailyBreakdown.reduce((s,d)=>s+d.delivered,0);\n  const monthTotalPickups = dailyBreakdown.reduce((s,d)=>s+d.pickups,0);
+  const monthTotalDelivered = dailyBreakdown.reduce((s,d)=>s+d.delivered,0);
+  const monthTotalPickups = dailyBreakdown.reduce((s,d)=>s+d.pickups,0);
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -1860,3 +1863,4 @@ function AdminFuelTab({ riders, adminFuel, riderName }) {
     </div>
   );
 }
+
