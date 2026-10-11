@@ -187,6 +187,7 @@ export default function App() {
   const [duty] = useCollection("duty");
   const [lateNotices] = useCollection("lateNotices");
   const [settings] = useCollection("settings");
+  const [adminRequests] = useCollection("adminRequests");
   const officeSetting = settings.find((s) => s.id === "office" || s.type === "office");
 
   // seed a founder account if riders collection is totally empty
@@ -300,7 +301,7 @@ export default function App() {
         {tab==="panchang" && <PanchangTab/>}
         {tab==="announcements" && <AnnouncementsTab user={user} isAdmin={isAdmin} announcements={announcements}/>}
         {tab==="adminfuel" && isAdmin && <AdminFuelTab riders={riders} adminFuel={adminFuel} riderName={riderName}/>}
-        {tab==="riders" && isAdmin && <RidersTab riders={riders} isFounder={isFounder} officeSetting={officeSetting}/>}
+        {tab==="riders" && isAdmin && <RidersTab user={user} riders={riders} isFounder={isFounder} officeSetting={officeSetting} adminRequests={adminRequests}/>}
         {tab==="reports" && isAdmin && <ReportsTab riders={riders} leaves={leaves} rounds={rounds} odometer={odometer}
           adminFuel={adminFuel} personalFuel={personalFuel} attendance={attendance} riderName={riderName} duty={duty}/>}
       </main>
@@ -438,6 +439,7 @@ function LoginScreen({ riders, onLogin }) {
               <span className="badge badge-pending">{r.role}</span>
             </button>
           ))}
+          {staffList.length === 0 && <p style={{fontSize:12,color:"#E5484D"}}>No Admin account found. Founder must set an existing account's role to Admin in Riders.</p>}
           <button onClick={()=>setAdminMode(false)} style={{background:"none",border:"none",color:"#7C8592",fontSize:12,marginTop:8,cursor:"pointer"}}>← Back to rider list</button>
         </div>
       ) : !pinFor && founderMode ? (
@@ -709,6 +711,38 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
           <StatCard label="Pending Approvals" value={rounds.filter(r=>r.closed && r.approved==="pending").length} color="#E5484D"/>
         </div>
       )}
+
+      {isAdmin && (() => {
+        const pendingLeaves = leaves.filter((l) => l.status === "pending");
+        const pendingRounds = rounds.filter((r) => r.closed && r.approved === "pending");
+        const pendingTotal = pendingLeaves.length + pendingRounds.length;
+        return (
+          <div className="card" style={{borderColor: pendingTotal ? "rgba(245,166,35,0.55)" : "#2A3038"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:10}}>
+              <div className="section-label" style={{marginBottom:0}}>Pending Tasks</div>
+              <span className="badge" style={{background:pendingTotal?"rgba(245,166,35,0.16)":"rgba(61,220,151,0.12)",color:pendingTotal?"#F5A623":"#3DDC97"}}>{pendingTotal} pending</span>
+            </div>
+            {pendingTotal === 0 ? (
+              <p style={{fontSize:12,color:"#7C8592",margin:0}}>No pending leave requests or pickup/delivery round approvals.</p>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {pendingLeaves.map((l) => (
+                  <button key={`leave-${l.id}`} onClick={()=>setTab("leave")} className="btn-ghost" style={{width:"100%",textAlign:"left",padding:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderColor:"rgba(245,166,35,0.25)"}}>
+                    <span><b style={{display:"block",fontSize:12,color:"#EDEAE1"}}>Leave request — {riderName(l.riderId)}</b><span style={{fontSize:11,color:"#7C8592"}}>{fmtDate(l.date)} · {l.customReason || l.reason || "Reason not specified"}</span></span>
+                    <span style={{fontSize:11,color:"#F5A623",whiteSpace:"nowrap"}}>Review →</span>
+                  </button>
+                ))}
+                {pendingRounds.map((r) => (
+                  <button key={`round-${r.id}`} onClick={()=>setTab("rounds")} className="btn-ghost" style={{width:"100%",textAlign:"left",padding:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,borderColor:"rgba(229,72,77,0.25)"}}>
+                    <span><b style={{display:"block",fontSize:12,color:"#EDEAE1"}}>Round approval — {riderName(r.riderId)}</b><span style={{fontSize:11,color:"#7C8592"}}>{fmtDate(r.date)} · Delivered: {r.deliveredFinal ?? r.deliveredCount ?? 0} · Pickup: {r.pickupCount ?? 0} · Returned: {r.returnedCount ?? 0}</span></span>
+                    <span style={{fontSize:11,color:"#E5484D",whiteSpace:"nowrap"}}>Review →</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <button onClick={()=>setTab("leave")} className="btn-ghost" style={{width:"100%",padding:10}}>Go to Leave →</button>
 
@@ -1524,7 +1558,7 @@ function AnnouncementsTab({ user, isAdmin, announcements }) {
 }
 
 // ---------------- Riders management (admin, role control founder-only) ----------------
-function RidersTab({ riders, isFounder, officeSetting }) {
+function RidersTab({ user, riders, isFounder, officeSetting, adminRequests }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [pin, setPin] = useState("");
@@ -1549,7 +1583,25 @@ function RidersTab({ riders, isFounder, officeSetting }) {
     }
     setSettingLoc(false);
   };
-  const remove = (id) => deleteRec("riders", id);
+  // Admins may request deletion, but only Founder can execute it. Prevent self-delete.
+  const requestDelete = async (rider) => {
+    if (!user || rider.id === user.id || rider.role === "founder") return;
+    await addRec("adminRequests", {
+      type: "delete_rider", targetId: rider.id, targetName: rider.name,
+      requestedById: user.id, requestedByName: user.name, status: "pending",
+      createdAtMs: Date.now()
+    });
+    alert("Deletion request sent to Founder for approval.");
+  };
+  const approveDelete = async (req) => {
+    if (!isFounder || req.status !== "pending" || !req.targetId) return;
+    await deleteRec("riders", req.targetId);
+    await updateRec("adminRequests", req.id, { status: "approved", reviewedBy: user.name, reviewedAtMs: Date.now() });
+  };
+  const rejectDelete = async (req) => {
+    if (!isFounder || req.status !== "pending") return;
+    await updateRec("adminRequests", req.id, { status: "rejected", reviewedBy: user.name, reviewedAtMs: Date.now() });
+  };
   const setRole = (id, role) => updateRec("riders", id, { role, pin: role==="rider" ? "" : "1234" });
   const resetPin = (id) => updateRec("riders", id, { pin: "1234" });
 
@@ -1584,12 +1636,27 @@ function RidersTab({ riders, isFounder, officeSetting }) {
               {isFounder && r.role !== "founder" && (
                 <button onClick={()=>resetPin(r.id)} className="btn-ghost" style={{padding:"4px 8px",fontSize:10}}>Reset PIN</button>
               )}
-              {r.role !== "founder" && <button onClick={()=>remove(r.id)} style={{background:"none",border:"none",color:"#7C8592",cursor:"pointer"}}><Trash2 size={14}/></button>}
+              {isFounder && r.role !== "founder" && <button onClick={()=>{ if (window.confirm(`Delete ${r.name}? This cannot be undone.`)) deleteRec("riders", r.id); }} style={{background:"none",border:"none",color:"#E5484D",cursor:"pointer"}}><Trash2 size={14}/></button>}
+              {!isFounder && r.role !== "founder" && r.id !== user?.id && <button onClick={()=>requestDelete(r)} style={{background:"none",border:"none",color:"#7C8592",cursor:"pointer"}} title="Request Founder approval"><Trash2 size={14}/></button>}
             </div>
           </div>
         ))}
       </div>
-      {!isFounder && <p style={{fontSize:11,color:"#7C8592"}}>Only the Founder can change roles or add riders.</p>}
+      {!isFounder && <p style={{fontSize:11,color:"#7C8592"}}>Admins cannot delete themselves or directly delete riders. Deletion requests require Founder approval.</p>}
+
+      {isFounder && (
+        <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div className="section-label">Pending Founder Approvals · Rider Deletion</div>
+          {adminRequests.filter(q => q.type === "delete_rider" && q.status === "pending").length === 0
+            ? <p style={{fontSize:12,color:"#7C8592"}}>No pending deletion requests.</p>
+            : adminRequests.filter(q => q.type === "delete_rider" && q.status === "pending").map(req => (
+              <div key={req.id} className="list-row" style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                <div><div style={{fontSize:13,fontWeight:600}}>{req.targetName}</div><div style={{fontSize:11,color:"#7C8592"}}>Requested by {req.requestedByName}</div></div>
+                <div style={{display:"flex",gap:6}}><button className="btn-primary" onClick={()=>approveDelete(req)} style={{padding:"6px 8px",fontSize:11}}>Approve</button><button className="btn-ghost" onClick={()=>rejectDelete(req)} style={{padding:"6px 8px",fontSize:11}}>Reject</button></div>
+              </div>
+            ))}
+        </div>
+      )}
 
       {isFounder && (
         <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
