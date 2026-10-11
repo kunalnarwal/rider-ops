@@ -16,21 +16,21 @@ const RATES = [2.5, 2.75];
 // Pickup client master and rider-specific priority order.
 const PICKUP_CLIENTS = [
   "Agriwise", "Ambit", "AU Small Red", "AU Small Red 2nd Floor",
-  "AU Small Jindal Chowk", "Care Health", "Darcl Rishi Nagar", "Darcl Tilak Bazar",
-  "DCB Bank", "Equitas Bank Red", "Equitas Bank Jindal Chowk", "Finnova Capital",
+  "AU Bank Jindal Chowk", "Care Health", "Darcl Rishi Nagar", "Darcl Tilak Bazar",
+  "DCB Bank", "Equitas Bank", "Equitas Bank Jindal Chowk", "Finnova",
   "Grihum Housing", "Indira IVF", "Indostar", "L&T", "Mahindra Housing",
   "Muthoot Homefin", "Premarica", "Rajesh Pruthi", "Shubham Housing", "Tata Aia",
   "Truehome", "Aquadyne", "Astro Praduman", "Gaurija Automation", "Ortho Solution",
-  "Sai Courier Point", "United India Insurance", "Utsav Engineering", "Other"
+  "Sai Courier Point", "United India", "Utsav Engineering"
 ];
 const RIDER_PICKUP_CLIENTS = {
   "Sunil Kumar": ["Agriwise", "Utsav Engineering"],
-  "Rajiv Kumar": ["AU Small Red", "AU Small Red 2nd Floor", "Finnova Capital", "L&T", "Indostar", "DCB Bank", "Equitas Bank Red", "Care Health", "Darcl Tilak Bazar", "Darcl Rishi Nagar"],
-  "Rajeev Kumar": ["AU Small Red", "AU Small Red 2nd Floor", "Finnova Capital", "L&T", "Indostar", "DCB Bank", "Equitas Bank Red", "Care Health", "Darcl Tilak Bazar", "Darcl Rishi Nagar"],
+  "Rajiv Kumar": ["AU Small Red", "AU Small Red 2nd Floor", "Finnova", "L&T", "Indostar", "DCB Bank", "Equitas Bank", "Care Health", "Darcl Tilak Bazar", "Darcl Rishi Nagar"],
+  "Rajeev Kumar": ["AU Small Red", "AU Small Red 2nd Floor", "Finnova", "L&T", "Indostar", "DCB Bank", "Equitas Bank", "Care Health", "Darcl Tilak Bazar", "Darcl Rishi Nagar"],
   "Suresh Kumar": ["Darcl Tilak Bazar", "Darcl Rishi Nagar", "Care Health", "Rajesh Pruthi"],
-  "Vinod Kumar": ["AU Small Jindal Chowk", "Equitas Bank Jindal Chowk", "Ambit", "Ortho Solution", "Gaurija Automation", "Muthoot Homefin", "Tata Aia", "Premarica", "Indira IVF", "United India Insurance", "Rajesh Pruthi"],
-  "Sandeep": ["Shubham Housing", "Aquadyne", "Astro Praduman", "Finnova Capital", "DCB Bank", "Indostar"],
-  "Abhishek": ["Aquadyne", "Astro Praduman", "Care Health", "Finnova Capital"]
+  "Vinod Kumar": ["AU Bank Jindal Chowk", "Equitas Bank Jindal Chowk", "Ambit", "Ortho Solution", "Gaurija Automation", "Muthoot Homefin", "Tata Aia", "Premarica", "Indira IVF", "United India", "Rajesh Pruthi"],
+  "Sandeep": ["Shubham Housing", "Aquadyne", "Astro Praduman", "Finnova", "DCB Bank", "Indostar"],
+  "Abhishek": ["Aquadyne", "Astro Praduman", "Care Health", "Finnova"]
 };
 
 // Fixed-date holidays (same every year) + commonly-known 2026 dates for lunar/variable
@@ -835,6 +835,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const [pickupInput, setPickupInput] = useState("");
   const [selectedPickupClients, setSelectedPickupClients] = useState([]);
   const [pickupQuantities, setPickupQuantities] = useState({});
+  const [showOtherPickupClients, setShowOtherPickupClients] = useState(false);
   const [scanning, setScanning] = useState(false);
 
   const targetId = isAdmin ? viewRiderId : user.id;
@@ -852,7 +853,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
     setDrs(""); setDeliveryCount("");
   };
 
-  const openCloseModal = (r) => { setClosingRound(r); setHadReturns(null); setHadPickup(null); setReturnedInput(""); setPickupInput(""); setSelectedPickupClients([]); setPickupQuantities({}); };
+  const openCloseModal = (r) => { setClosingRound(r); setHadReturns(null); setHadPickup(null); setReturnedInput(""); setPickupInput(""); setSelectedPickupClients([]); setPickupQuantities({}); setShowOtherPickupClients(false); };
   const confirmClose = async () => {
     if (hadReturns === null || hadPickup === null) return;
     const returned = hadReturns ? (parseInt(returnedInput,10) || 0) : 0;
@@ -860,8 +861,8 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
       .filter((client) => client !== "Other")
       .map((client) => ({ client, count: Math.max(0, parseInt(pickupQuantities[client], 10) || 0) }))
       .filter((item) => item.count > 0) : [];
-    const otherCount = hadPickup && selectedPickupClients.includes("Other") ? Math.max(0, parseInt(pickupQuantities.Other, 10) || 0) : 0;
-    const pickup = hadPickup ? (pickupDetails.reduce((sum, item) => sum + item.count, 0) + otherCount) : 0;
+    const otherCount = 0;
+    const pickup = hadPickup ? pickupDetails.reduce((sum, item) => sum + item.count, 0) : 0;
     if (hadPickup && selectedPickupClients.length === 0) return;
     if (hadPickup && selectedPickupClients.some((client) => (parseInt(pickupQuantities[client], 10) || 0) < 0)) return;
     await updateRec("rounds", closingRound.id, {
@@ -997,10 +998,11 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
             </div>
             {hadPickup && (() => {
               const assigned = RIDER_PICKUP_CLIENTS[user.name] || [];
-              const orderedClients = [...assigned, ...PICKUP_CLIENTS.filter((client) => !assigned.includes(client))];
+              const otherClients = PICKUP_CLIENTS.filter((client) => client !== "Other" && !assigned.includes(client));
+              const orderedClients = showOtherPickupClients ? [...assigned, ...otherClients] : assigned;
               return (
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  <p style={{fontSize:11,color:"#7C8592"}}>Your assigned clients appear first. Select every client you collected parcels from, then enter the parcel quantity for each.</p>
+                  <p style={{fontSize:11,color:"#7C8592"}}>Your regular pickup clients are shown first. Select each client and enter parcel quantities. Use Other only when you collected from a client not in your regular list.</p>
                   {orderedClients.map((client) => {
                     const selected = selectedPickupClients.includes(client);
                     return (
@@ -1014,7 +1016,15 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
                       </div>
                     );
                   })}
-                  <div style={{fontSize:12,color:"#F5A623"}}>Pickup parcel total: {selectedPickupClients.reduce((sum,client)=>sum + Math.max(0,parseInt(pickupQuantities[client],10)||0),0)}</div>
+                  <div style={{border:"1px solid #2A3038",borderRadius:8,padding:10}}>
+                    <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
+                      <input type="checkbox" checked={showOtherPickupClients} onChange={(e)=>{setShowOtherPickupClients(e.target.checked); if(!e.target.checked) setSelectedPickupClients(prev=>prev.filter(c=>!otherClients.includes(c)));}}/>
+                      <span style={{fontWeight:700,color:"#F5A623"}}>Other — show all remaining pickup clients</span>
+                    </label>
+                    {showOtherPickupClients && <p style={{fontSize:10,color:"#7C8592",margin:"6px 0 0"}}>Select the actual client(s) below. Do not enter a parcel count against Other itself.</p>}
+                  </div>
+                  {showOtherPickupClients && <button type="button" onClick={()=>setShowOtherPickupClients(false)} className="btn-ghost" style={{width:"100%"}}>Save Selection & Back</button>}
+                  <div style={{fontSize:12,color:"#F5A623"}}>Pickup parcel total: {selectedPickupClients.filter(client=>client!=="Other").reduce((sum,client)=>sum + Math.max(0,parseInt(pickupQuantities[client],10)||0),0)}</div>
                 </div>
               );
             })()}
