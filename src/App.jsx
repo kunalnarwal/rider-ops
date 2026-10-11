@@ -13,6 +13,26 @@ import {
 const REASON_OPTIONS = ["Marriage", "Personal", "Fever", "Other"];
 const RATES = [2.5, 2.75];
 
+// Pickup client master and rider-specific priority order.
+const PICKUP_CLIENTS = [
+  "Agriwise", "Ambit", "AU Small Red", "AU Small Red 2nd Floor",
+  "AU Small Jindal Chowk", "Care Health", "Darcl Rishi Nagar", "Darcl Tilak Bazar",
+  "DCB Bank", "Equitas Bank Red", "Equitas Bank Jindal Chowk", "Finnova Capital",
+  "Grihum Housing", "Indira IVF", "Indostar", "L&T", "Mahindra Housing",
+  "Muthoot Homefin", "Premarica", "Rajesh Pruthi", "Shubham Housing", "Tata Aia",
+  "Truehome", "Aquadyne", "Astro Praduman", "Gaurija Automation", "Ortho Solution",
+  "Sai Courier Point", "United India Insurance", "Utsav Engineering", "Other"
+];
+const RIDER_PICKUP_CLIENTS = {
+  "Sunil Kumar": ["Agriwise", "Utsav Engineering"],
+  "Rajiv Kumar": ["AU Small Red", "AU Small Red 2nd Floor", "Finnova Capital", "L&T", "Indostar", "DCB Bank", "Equitas Bank Red", "Care Health", "Darcl Tilak Bazar", "Darcl Rishi Nagar"],
+  "Rajeev Kumar": ["AU Small Red", "AU Small Red 2nd Floor", "Finnova Capital", "L&T", "Indostar", "DCB Bank", "Equitas Bank Red", "Care Health", "Darcl Tilak Bazar", "Darcl Rishi Nagar"],
+  "Suresh Kumar": ["Darcl Tilak Bazar", "Darcl Rishi Nagar", "Care Health", "Rajesh Pruthi"],
+  "Vinod Kumar": ["AU Small Jindal Chowk", "Equitas Bank Jindal Chowk", "Ambit", "Ortho Solution", "Gaurija Automation", "Muthoot Homefin", "Tata Aia", "Premarica", "Indira IVF", "United India Insurance", "Rajesh Pruthi"],
+  "Sandeep": ["Shubham Housing", "Aquadyne", "Astro Praduman", "Finnova Capital", "DCB Bank", "Indostar"],
+  "Abhishek": ["Aquadyne", "Astro Praduman", "Care Health", "Finnova Capital"]
+};
+
 // Fixed-date holidays (same every year) + commonly-known 2026 dates for lunar/variable
 // festivals. Lunar festival dates shift every year and can be off by a day depending on
 // local sighting/almanac — admin can add, edit or remove any of these from the Calendar tab.
@@ -270,7 +290,7 @@ export default function App() {
         {tab==="home" && <HomeTab user={user} isAdmin={isAdmin} riders={riders} leaves={leaves} rounds={rounds}
           duty={duty} attendance={attendance} isHoliday={isHoliday} setTab={setTab} riderName={riderName}
           lateNotices={lateNotices} officeSetting={officeSetting}/>}
-        {tab==="leave" && <LeaveTab user={user} isAdmin={isAdmin} riders={riders} leaves={leaves} riderName={riderName} isHoliday={isHoliday}/>}
+        {tab==="leave" && <LeaveTab user={user} isAdmin={isAdmin} isFounder={isFounder} riders={riders} leaves={leaves} riderName={riderName} isHoliday={isHoliday}/>}
         {tab==="rounds" && <RoundsTab user={user} isAdmin={isAdmin} isFounder={isFounder} riders={riders} rounds={rounds} riderName={riderName}/>}
         {tab==="mileage" && <MileageTab user={user} isAdmin={isAdmin} riders={riders} odometer={odometer} riderName={riderName}/>}
         {tab==="myfuel" && <MyFuelTab user={user} personalFuel={personalFuel}/>}
@@ -703,7 +723,7 @@ function StatCard({ label, value, color }) {
 }
 
 // ---------------- Leave (with approval workflow) ----------------
-function LeaveTab({ user, isAdmin, riders, leaves, riderName, isHoliday }) {
+function LeaveTab({ user, isAdmin, isFounder, riders, leaves, riderName, isHoliday }) {
   const [date, setDate] = useState(todayISO());
   const [reason, setReason] = useState(REASON_OPTIONS[0]);
   const [customReason, setCustomReason] = useState("");
@@ -721,7 +741,7 @@ function LeaveTab({ user, isAdmin, riders, leaves, riderName, isHoliday }) {
     });
     setCustomReason(""); setHalfDay(false); setHalfDayFrom(""); setHalfDayTo("");
   };
-  const decide = (id, status) => updateRec("leaves", id, { status, decidedBy: user.name });
+  const decide = (id, status) => updateRec("leaves", id, { status, decidedBy: user.name, decidedById: user.id, decidedAtMs: Date.now() });
   const remove = (id) => deleteRec("leaves", id);
 
   const sorted = [...leaves].sort((a,b)=> (a.date > b.date ? 1 : -1)).reverse();
@@ -761,7 +781,7 @@ function LeaveTab({ user, isAdmin, riders, leaves, riderName, isHoliday }) {
         <button onClick={submit} disabled={reason==="Other" && !customReason.trim()} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
           <Plus size={15}/> Submit Request
         </button>
-        <p style={{fontSize:11,color:"#7C8592"}}>The request will show as "pending" to everyone until admin approves or rejects it.</p>
+        <p style={{fontSize:11,color:"#7C8592"}}>The request remains pending until the Founder approves or rejects it.</p>
       </div>
 
       <div>
@@ -777,12 +797,13 @@ function LeaveTab({ user, isAdmin, riders, leaves, riderName, isHoliday }) {
                     {l.halfDay && <span className="badge badge-pending">half-day</span>}
                   </div>
                   <div style={{fontSize:11,color:"#7C8592"}}>{fmtDate(l.date)} · {l.customReason || l.reason}</div>
+                  {l.decidedBy && <div style={{fontSize:10,color:"#8AA5FF",marginTop:3}}>Decision: {l.status} by {l.decidedBy} · {l.decidedAtMs ? new Date(l.decidedAtMs).toLocaleString("en-IN") : "time unavailable"}</div>}
                   {l.halfDay && l.halfDayFrom && (
                     <div style={{fontSize:10,color:"#8AA5FF"}} className="font-mono">{l.halfDayPeriod}: {l.halfDayFrom} – {l.halfDayTo}</div>
                   )}
                 </div>
                 <div style={{display:"flex",gap:6,flexShrink:0}}>
-                  {isAdmin && l.status==="pending" && (
+                  {isFounder && l.status==="pending" && (
                     <>
                       <button onClick={()=>decide(l.id,"approved")} style={{background:"none",border:"none",color:"#3DDC97",cursor:"pointer"}}><Check size={16}/></button>
                       <button onClick={()=>decide(l.id,"rejected")} style={{background:"none",border:"none",color:"#E5484D",cursor:"pointer"}}><XIcon size={16}/></button>
@@ -811,7 +832,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const [returnedInput, setReturnedInput] = useState("");
   const [hadReturns, setHadReturns] = useState(null); // true/false
   const [hadPickup, setHadPickup] = useState(null);
-  const [pickupInput, setPickupInput] = useState("");
+  const [pickupInput, setPickupInput] = useState("");\n  const [selectedPickupClients, setSelectedPickupClients] = useState([]);\n  const [pickupQuantities, setPickupQuantities] = useState({});
   const [scanning, setScanning] = useState(false);
 
   const targetId = isAdmin ? viewRiderId : user.id;
@@ -829,14 +850,23 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
     setDrs(""); setDeliveryCount("");
   };
 
-  const openCloseModal = (r) => { setClosingRound(r); setHadReturns(null); setHadPickup(null); setReturnedInput(""); setPickupInput(""); };
+  const openCloseModal = (r) => { setClosingRound(r); setHadReturns(null); setHadPickup(null); setReturnedInput(""); setPickupInput(""); setSelectedPickupClients([]); setPickupQuantities({}); };
   const confirmClose = async () => {
     if (hadReturns === null || hadPickup === null) return;
     const returned = hadReturns ? (parseInt(returnedInput,10) || 0) : 0;
-    const pickup = hadPickup ? (parseInt(pickupInput,10) || 0) : 0;
+    const pickupDetails = hadPickup ? selectedPickupClients
+      .filter((client) => client !== "Other")
+      .map((client) => ({ client, count: Math.max(0, parseInt(pickupQuantities[client], 10) || 0) }))
+      .filter((item) => item.count > 0) : [];
+    const otherCount = hadPickup && selectedPickupClients.includes("Other") ? Math.max(0, parseInt(pickupQuantities.Other, 10) || 0) : 0;
+    const pickup = hadPickup ? (pickupDetails.reduce((sum, item) => sum + item.count, 0) + otherCount) : 0;
+    if (hadPickup && selectedPickupClients.length === 0) return;
+    if (hadPickup && selectedPickupClients.some((client) => (parseInt(pickupQuantities[client], 10) || 0) < 0)) return;
     await updateRec("rounds", closingRound.id, {
       closed: true, approved: "pending", returnedCount: returned, pickupCount: pickup,
+      pickupDetails, pickupOtherCount: otherCount,
       deliveredFinal: Math.max(0, closingRound.deliveryCount - returned),
+      closedBy: user.name, closedById: user.id, closedAtMs: Date.now(),
     });
     setClosingRound(null);
   };
@@ -903,6 +933,8 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
                   <div style={{fontSize:13,fontWeight:600}}>Round {r.roundNumber} · DRS {r.drsNumber}</div>
                   <div style={{fontSize:11,color:"#7C8592"}} className="font-mono">
                     Out: {r.deliveryCount} {r.closed ? `· Delivered: ${r.deliveredFinal} · Returned: ${r.returnedCount} · Pickup: ${r.pickupCount}` : "· Pending closure"}
+                    {r.pickupDetails?.length > 0 && <div style={{fontSize:10,color:"#F5A623",marginTop:3}}>Clients: {r.pickupDetails.map((p)=>`${p.client} (${p.count})`).join(", ")}{r.pickupOtherCount ? `, Other (${r.pickupOtherCount})` : ""}</div>}
+                    {r.approvedBy && <div style={{fontSize:10,color:"#8AA5FF",marginTop:3}}>{r.approved} by {r.approvedBy} · {r.approvedAtMs ? new Date(r.approvedAtMs).toLocaleString("en-IN") : "time unavailable"}</div>}
                   </div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -912,10 +944,10 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
                   {r.closed && r.approved==="rejected" && <span className="badge badge-rejected">rejected</span>}
                   {isAdmin && r.closed && r.approved==="pending" && (
                     <>
-                      <button onClick={()=>updateRec("rounds", r.id, { approved: "approved" })} className="btn-ghost" style={{padding:"4px 8px",fontSize:10,borderColor:"#3DDC97",color:"#3DDC97"}}>
+                      <button onClick={()=>updateRec("rounds", r.id, { approved: "approved", approvedBy: user.name, approvedById: user.id, approvedAtMs: Date.now() })} className="btn-ghost" style={{padding:"4px 8px",fontSize:10,borderColor:"#3DDC97",color:"#3DDC97"}}>
                         Approve
                       </button>
-                      <button onClick={()=>updateRec("rounds", r.id, { approved: "rejected" })} className="btn-ghost" style={{padding:"4px 8px",fontSize:10,borderColor:"#E5484D",color:"#E5484D"}}>
+                      <button onClick={()=>updateRec("rounds", r.id, { approved: "rejected", approvedBy: user.name, approvedById: user.id, approvedAtMs: Date.now() })} className="btn-ghost" style={{padding:"4px 8px",fontSize:10,borderColor:"#E5484D",color:"#E5484D"}}>
                         Reject
                       </button>
                     </>
@@ -961,9 +993,29 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
               <button onClick={()=>setHadPickup(false)} className="btn-ghost" style={{flex:1, borderColor: hadPickup===false?"#3DDC97":"#2A3038", color: hadPickup===false?"#3DDC97":"#7C8592"}}>No</button>
               <button onClick={()=>setHadPickup(true)} className="btn-ghost" style={{flex:1, borderColor: hadPickup===true?"#F5A623":"#2A3038", color: hadPickup===true?"#F5A623":"#7C8592"}}>Yes</button>
             </div>
-            {hadPickup && (
-              <input type="number" value={pickupInput} onChange={(e)=>setPickupInput(e.target.value)} placeholder="How many pickups did you bring" className="input font-mono"/>
-            )}
+            {hadPickup && (() => {
+              const assigned = RIDER_PICKUP_CLIENTS[user.name] || [];
+              const orderedClients = [...assigned, ...PICKUP_CLIENTS.filter((client) => !assigned.includes(client))];
+              return (
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  <p style={{fontSize:11,color:"#7C8592"}}>Your assigned clients appear first. Select every client you collected parcels from, then enter the parcel quantity for each.</p>
+                  {orderedClients.map((client) => {
+                    const selected = selectedPickupClients.includes(client);
+                    return (
+                      <div key={client} style={{border:"1px solid #2A3038",borderRadius:8,padding:8}}>
+                        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
+                          <input type="checkbox" checked={selected} onChange={(e)=>setSelectedPickupClients((prev)=>e.target.checked ? [...prev,client] : prev.filter((x)=>x!==client))}/>
+                          <span style={{fontWeight:assigned.includes(client)?700:400,color:assigned.includes(client)?"#F5A623":"#EDEAE1"}}>{client}</span>
+                          {assigned.includes(client) && <span className="badge badge-approved">Assigned</span>}
+                        </label>
+                        {selected && <input type="number" min="0" value={pickupQuantities[client] || ""} onChange={(e)=>setPickupQuantities((prev)=>({...prev,[client]:e.target.value}))} placeholder={client==="Other"?"Other client parcel count":"Parcel count"} className="input font-mono" style={{marginTop:6}}/>}
+                      </div>
+                    );
+                  })}
+                  <div style={{fontSize:12,color:"#F5A623"}}>Pickup parcel total: {selectedPickupClients.reduce((sum,client)=>sum + Math.max(0,parseInt(pickupQuantities[client],10)||0),0)}</div>
+                </div>
+              );
+            })()}
 
             <button onClick={confirmClose} disabled={hadReturns===null || hadPickup===null} className="btn-primary">Confirm & Close</button>
             <button onClick={()=>setClosingRound(null)} style={{background:"none",border:"none",color:"#7C8592",fontSize:12,cursor:"pointer"}}>Cancel</button>
@@ -1494,7 +1546,7 @@ function RidersTab({ riders, isFounder, officeSetting }) {
               <div style={{fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
                 {r.name} <span className="badge badge-pending">{r.role}</span>
               </div>
-              <div style={{fontSize:11,color:"#7C8592"}} className="font-mono">{r.phone || "—"} · PIN: {r.pin || "—"}</div>
+              <div style={{fontSize:11,color:"#7C8592"}} className="font-mono">{r.phone || "No phone added"} · PIN: hidden</div>
             </div>
             <div style={{display:"flex",gap:6,alignItems:"center"}}>
               {isFounder && r.role !== "founder" && (
@@ -1564,13 +1616,13 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
       byDate[rd.date].delivered += rd.deliveredFinal || 0;
     });
     myDuty.forEach((d) => {
-      byDate[d.date] = byDate[d.date] || { date: d.date, delivered: 0, morningIn: null, eveningIn: null };
+      byDate[d.date] = byDate[d.date] || { date: d.date, delivered: 0, pickups: 0, returned: 0, rounds: [], morningIn: null, eveningIn: null };
       if (d.period === "morning") byDate[d.date].morningIn = d.startTime;
       if (d.period === "evening") byDate[d.date].eveningIn = d.startTime;
     });
     return Object.values(byDate).sort((a,b)=>a.date<b.date?1:-1);
   }, [monthRounds, myDuty]);
-  const monthTotalDelivered = dailyBreakdown.reduce((s,d)=>s+d.delivered,0);
+  const monthTotalDelivered = dailyBreakdown.reduce((s,d)=>s+d.delivered,0);\n  const monthTotalPickups = dailyBreakdown.reduce((s,d)=>s+d.pickups,0);
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -1622,7 +1674,7 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
           </div>
 
           <div>
-            <div className="section-label">Daily Report — {thisMonth} (Total Delivered: {monthTotalDelivered})</div>
+            <div className="section-label">Daily Report — {thisMonth} (Delivered: {monthTotalDelivered} · Pickups: {monthTotalPickups})</div>
             <div className="list-card">
               {dailyBreakdown.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No data for this month yet.</div> :
                 dailyBreakdown.map(d=>(
@@ -1632,6 +1684,14 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
                       <div style={{textAlign:"center"}}>
                         <div className="font-mono" style={{fontSize:13,color:"#3DDC97"}}>{d.delivered}</div>
                         <div style={{fontSize:9,color:"#7C8592"}}>PKTS</div>
+                      </div>
+                      <div style={{textAlign:"center"}}>
+                        <div className="font-mono" style={{fontSize:13,color:"#F5A623"}}>{d.pickups}</div>
+                        <div style={{fontSize:9,color:"#7C8592"}}>PICKUPS</div>
+                      </div>
+                      <div style={{textAlign:"center"}}>
+                        <div className="font-mono" style={{fontSize:13,color:"#E5484D"}}>{d.returned}</div>
+                        <div style={{fontSize:9,color:"#7C8592"}}>RETURNED</div>
                       </div>
                       <div style={{textAlign:"center"}}>
                         <div className="font-mono" style={{fontSize:11,color:"#F5A623"}}>{d.morningIn ? fmtTime(d.morningIn) : "—"}</div>
@@ -1670,6 +1730,8 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
                   <div key={round.id} className="list-row">
                     <div style={{fontSize:12}} className="font-mono">{fmtDate(round.date)} · R{round.roundNumber} · DRS {round.drsNumber}</div>
                     <div style={{fontSize:12}} className="font-mono">D:{round.deliveredFinal} P:{round.pickupCount} Ret:{round.returnedCount}</div>
+                    {round.pickupDetails?.length > 0 && <div style={{fontSize:10,color:"#F5A623",marginTop:3}}>Pickup clients: {round.pickupDetails.map((p)=>`${p.client}: ${p.count}`).join(" · ")}{round.pickupOtherCount ? ` · Other: ${round.pickupOtherCount}` : ""}</div>}
+                    <div style={{fontSize:10,color:"#8AA5FF",marginTop:3}}>Approved by: {round.approvedBy || "Legacy record"}{round.approvedAtMs ? ` · ${new Date(round.approvedAtMs).toLocaleString("en-IN")}` : ""}</div>
                   </div>
                 ))
               }
