@@ -288,7 +288,7 @@ export default function App() {
       </header>
 
       <main style={{padding:"16px",paddingBottom:40,maxWidth:640,margin:"0 auto"}}>
-        {tab==="home" && <HomeTab user={user} isAdmin={isAdmin} riders={riders} leaves={leaves} rounds={rounds}
+        {tab==="home" && <HomeTab user={user} isAdmin={isAdmin} isFounder={isFounder} riders={riders} leaves={leaves} rounds={rounds}
           duty={duty} attendance={attendance} isHoliday={isHoliday} setTab={setTab} riderName={riderName}
           lateNotices={lateNotices} officeSetting={officeSetting}/>}
         {tab==="leave" && <LeaveTab user={user} isAdmin={isAdmin} isFounder={isFounder} riders={riders} leaves={leaves} riderName={riderName} isHoliday={isHoliday}/>}
@@ -467,7 +467,7 @@ function LoginScreen({ riders, onLogin }) {
 }
 
 // ---------------- Home ----------------
-function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHoliday, setTab, riderName, lateNotices, officeSetting }) {
+function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, attendance, isHoliday, setTab, riderName, lateNotices, officeSetting }) {
   const today = todayISO();
 
   // Congratulate the rider if they won Rider of the Month for the most recently
@@ -694,7 +694,14 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
           </div>
           {visibleLateNotices.map((n) => (
             <div key={n.id} style={{fontSize:14,marginTop:6,padding:"8px 10px",borderRadius:8,background:"rgba(229,72,77,0.12)",border:"1px solid rgba(229,72,77,0.35)"}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap",marginBottom:4}}><b style={{color:"#FF777C"}}>{riderName(n.riderId)}</b><span style={{fontSize:12,fontWeight:800,color:"#FFFFFF",background:n.date === today ? "#C92A32" : "#7C3AED",padding:"3px 7px",borderRadius:6}}>{n.date === today ? "TODAY" : "TOMORROW"} · {fmtDate(n.date)}</span></div><b>{n.fromTime} to {n.toTime}</b>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap",marginBottom:4}}>
+                <b style={{color:"#FF777C"}}>{riderName(n.riderId)}</b>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:12,fontWeight:800,color:"#FFFFFF",background:n.date === today ? "#C92A32" : "#7C3AED",padding:"3px 7px",borderRadius:6}}>{n.date === today ? "TODAY" : "TOMORROW"} · {fmtDate(n.date)}</span>
+                  {isFounder && <button onClick={async()=>{if(window.confirm(`Delete ${riderName(n.riderId)}'s late arrival notice?`)) await deleteRec("lateNotices",n.id);}} title="Delete late notice" aria-label="Delete late notice" style={{background:"#C92A32",border:"none",borderRadius:6,color:"#fff",padding:"4px 7px",display:"inline-flex",alignItems:"center",cursor:"pointer"}}><Trash2 size={14}/></button>}
+                </div>
+              </div>
+              <b>{n.fromTime} to {n.toTime}</b>
             </div>
           ))}
         </div>
@@ -853,7 +860,7 @@ function LeaveTab({ user, isAdmin, isFounder, riders, leaves, riderName, isHolid
         <button onClick={submit} disabled={reason==="Other" && !customReason.trim()} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
           <Plus size={15}/> Submit Request
         </button>
-        <p style={{fontSize:11,color:"#7C8592"}}>The request remains pending until the Founder approves or rejects it.</p>
+        <p style={{fontSize:11,color:"#7C8592"}}>The request remains pending until an Admin or Founder approves or rejects it.</p>
       </div>
 
       <div>
@@ -875,7 +882,7 @@ function LeaveTab({ user, isAdmin, isFounder, riders, leaves, riderName, isHolid
                   )}
                 </div>
                 <div style={{display:"flex",gap:6,flexShrink:0}}>
-                  {isFounder && l.status==="pending" && (
+                  {(isAdmin || isFounder) && l.status==="pending" && (
                     <>
                       <button onClick={()=>decide(l.id,"approved")} style={{background:"none",border:"none",color:"#3DDC97",cursor:"pointer"}}><Check size={16}/></button>
                       <button onClick={()=>decide(l.id,"rejected")} style={{background:"none",border:"none",color:"#E5484D",cursor:"pointer"}}><XIcon size={16}/></button>
