@@ -312,7 +312,7 @@ export default function App() {
 
       {showUnseenAnnouncements && (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,zIndex:70}}>
-          <div className="card" style={{maxWidth:360,width:"100%",display:"flex",flexDirection:"column",gap:12}}>
+          <div className="card" style={{maxWidth:360,width:"100%",maxHeight:"88vh",overflowY:"auto",display:"flex",flexDirection:"column",gap:12}}>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <Megaphone size={18} color="#F5A623"/>
               <div className="font-display" style={{fontSize:16,fontWeight:700,color:"#F5A623"}}>
@@ -505,7 +505,8 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
     await addRec("lateNotices", { riderId: user.id, date: lateDate, fromTime: lateFrom, toTime: lateTo, createdAtMs: Date.now() });
     setShowLateForm(false); setLateFrom(""); setLateTo("");
   };
-  const lateTomorrow = lateNotices.filter((n) => n.date === tomorrow0);
+  // Show late notices for today as well as tomorrow, so a notice entered yesterday remains visible on the actual late date.
+  const visibleLateNotices = lateNotices.filter((n) => n.date === today || n.date === tomorrow0);
   const [notifStatus, setNotifStatus] = useState(
     typeof Notification !== "undefined" ? Notification.permission : "unsupported"
   );
@@ -559,7 +560,10 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
   const onLeaveToday = leaves.find((l) => l.riderId === user.id && l.date === today && l.status === "approved");
 
   const tomorrow = addDaysISO(today, 1);
-  const leavesTomorrow = leaves.filter((l) => l.date === tomorrow && l.status === "approved");
+  // Show approved full-day and half-day leave notices for today and tomorrow to all users.
+  const visibleLeaveNotices = leaves
+    .filter((l) => (l.date === today || l.date === tomorrow) && l.status === "approved")
+    .sort((a, b) => a.date.localeCompare(b.date));
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -646,14 +650,25 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
         </div>
       )}
 
-      {leavesTomorrow.length > 0 && (
-        <div className="card" style={{borderColor:"rgba(245,166,35,0.4)",background:"rgba(245,166,35,0.08)"}}>
+      {visibleLeaveNotices.length > 0 && (
+        <div className="card" role="status" aria-live="polite" style={{
+          border:"2px solid #E5484D",
+          background:"linear-gradient(135deg, rgba(229,72,77,0.20), rgba(229,72,77,0.07))",
+          boxShadow:"0 0 0 2px rgba(229,72,77,0.10), 0 0 16px rgba(229,72,77,0.16)"
+        }}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
-            <AlertTriangle size={15} color="#F5A623"/>
-            <span className="font-display" style={{fontSize:13,fontWeight:700,color:"#F5A623"}}>REMINDER — ON LEAVE TOMORROW</span>
+            <CalendarOff size={17} color="#FF5A61"/>
+            <span className="font-display" style={{fontSize:13,fontWeight:800,color:"#FF5A61",letterSpacing:0.5}}>ON LEAVE</span>
           </div>
-          {leavesTomorrow.map((l) => (
-            <div key={l.id} style={{fontSize:13}}><b>{riderName(l.riderId)}</b> — {l.customReason || l.reason}</div>
+          {visibleLeaveNotices.map((l) => (
+            <div key={l.id} style={{fontSize:13,marginTop:6,padding:"8px 10px",borderRadius:8,background:"rgba(229,72,77,0.10)",border:"1px solid rgba(229,72,77,0.32)"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap",marginBottom:4}}>
+                <b style={{color:"#FF777C"}}>{riderName(l.riderId)}</b>
+                <span style={{fontSize:11,fontWeight:800,color:"#FFFFFF",background:l.date===today?"#C92A32":"#7C3AED",padding:"3px 7px",borderRadius:6}}>{l.date===today?"TODAY":"TOMORROW"} · {fmtDate(l.date)}</span>
+              </div>
+              <div>{l.halfDay ? "HALF-DAY LEAVE" : "FULL-DAY LEAVE"}{(l.halfDay && (l.fromTime || l.toTime)) ? ` · ${l.fromTime || ""}${l.fromTime && l.toTime ? "–" : ""}${l.toTime || ""}` : ""}</div>
+              <div style={{color:"#B9C0CA",marginTop:2}}>{l.customReason || l.reason || "Leave"}</div>
+            </div>
           ))}
         </div>
       )}
@@ -664,14 +679,23 @@ function HomeTab({ user, isAdmin, riders, leaves, rounds, duty, attendance, isHo
         </div>
       )}
 
-      {lateTomorrow.length > 0 && (
-        <div className="card" style={{borderColor:"rgba(138,165,255,0.4)",background:"rgba(138,165,255,0.08)"}}>
+      {visibleLateNotices.length > 0 && (
+        <div className="card" role="alert" aria-live="polite" style={{
+          border:"2px solid #E5484D",
+          background:"linear-gradient(135deg, rgba(229,72,77,0.22), rgba(229,72,77,0.08))",
+          boxShadow:"0 0 0 2px rgba(229,72,77,0.12), 0 0 18px rgba(229,72,77,0.20)",
+          animation:"lateNoticePulse 2s ease-in-out infinite"
+        }}>
+          <style>{`@keyframes lateNoticePulse { 0%,100% { box-shadow: 0 0 0 2px rgba(229,72,77,0.12), 0 0 12px rgba(229,72,77,0.12); } 50% { box-shadow: 0 0 0 4px rgba(229,72,77,0.22), 0 0 20px rgba(229,72,77,0.28); } }`}</style>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
-            <Timer size={15} color="#8AA5FF"/>
-            <span className="font-display" style={{fontSize:13,fontWeight:700,color:"#8AA5FF"}}>LATE TOMORROW</span>
+            <AlertTriangle size={17} color="#FF5A61"/>
+            <span className="font-display" style={{fontSize:13,fontWeight:800,color:"#FF5A61",letterSpacing:0.5}}>LATE ARRIVAL NOTICE</span>
+            <span style={{marginLeft:"auto",fontSize:10,fontWeight:800,color:"#FFFFFF",background:"#C92A32",padding:"3px 7px",borderRadius:6}}>NOTICE</span>
           </div>
-          {lateTomorrow.map((n) => (
-            <div key={n.id} style={{fontSize:13}}><b>{riderName(n.riderId)}</b> — {n.fromTime} to {n.toTime}</div>
+          {visibleLateNotices.map((n) => (
+            <div key={n.id} style={{fontSize:14,marginTop:6,padding:"8px 10px",borderRadius:8,background:"rgba(229,72,77,0.12)",border:"1px solid rgba(229,72,77,0.35)"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap",marginBottom:4}}><b style={{color:"#FF777C"}}>{riderName(n.riderId)}</b><span style={{fontSize:12,fontWeight:800,color:"#FFFFFF",background:n.date === today ? "#C92A32" : "#7C3AED",padding:"3px 7px",borderRadius:6}}>{n.date === today ? "TODAY" : "TOMORROW"} · {fmtDate(n.date)}</span></div><b>{n.fromTime} to {n.toTime}</b>
+            </div>
           ))}
         </div>
       )}
@@ -1071,7 +1095,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
                     </label>
                     {showOtherPickupClients && <p style={{fontSize:10,color:"#7C8592",margin:"6px 0 0"}}>Select the actual client(s) below. Do not enter a parcel count against Other itself.</p>}
                   </div>
-                  {showOtherPickupClients && <button type="button" onClick={()=>setShowOtherPickupClients(false)} className="btn-ghost" style={{width:"100%"}}>Save Selection & Back</button>}
+                  {showOtherPickupClients && <button type="button" onClick={()=>setShowOtherPickupClients(false)} className="btn-primary" style={{width:"100%",position:"sticky",bottom:0,zIndex:2,boxShadow:"0 -6px 12px rgba(0,0,0,0.25)",marginTop:4}}>Save Other Clients & Return</button>}
                   <div style={{fontSize:12,color:"#F5A623"}}>Pickup parcel total: {selectedPickupClients.filter(client=>client!=="Other").reduce((sum,client)=>sum + Math.max(0,parseInt(pickupQuantities[client],10)||0),0)}</div>
                 </div>
               );
