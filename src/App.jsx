@@ -77,6 +77,14 @@ function distanceMeters(lat1, lng1, lat2, lng2) {
   const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
   const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+function getCurrentPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error("Geolocation not supported")); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (err) => reject(err),
+      { enableHighAccuracy: true, timeout: 10000 }
     );
   });
 }
@@ -996,6 +1004,8 @@ function BarcodeScanModal({ onDetect, onClose }) {
           raf = requestAnimationFrame(tick);
         };
         tick();
+      } catch (e) {
+        setError("Camera access denied or unavailable. Please type the DRS number manually.");
       }
     })();
     return () => { stopped = true; if (raf) cancelAnimationFrame(raf); if (stream) stream.getTracks().forEach(t=>t.stop()); };
@@ -1550,6 +1560,10 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
   const dailyBreakdown = useMemo(() => {
     const byDate = {};
     monthRounds.forEach((rd) => {
+      byDate[rd.date] = byDate[rd.date] || { date: rd.date, delivered: 0, morningIn: null, eveningIn: null };
+      byDate[rd.date].delivered += rd.deliveredFinal || 0;
+    });
+    myDuty.forEach((d) => {
       byDate[d.date] = byDate[d.date] || { date: d.date, delivered: 0, morningIn: null, eveningIn: null };
       if (d.period === "morning") byDate[d.date].morningIn = d.startTime;
       if (d.period === "evening") byDate[d.date].eveningIn = d.startTime;
