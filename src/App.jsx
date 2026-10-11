@@ -391,10 +391,14 @@ function LoginScreen({ riders, onLogin }) {
   const [pin, setPin] = useState("");
   const [err, setErr] = useState("");
   const [adminMode, setAdminMode] = useState(false);
+  const [founderMode, setFounderMode] = useState(false);
+  const [logoTaps, setLogoTaps] = useState(0);
   const { text, Icon, color } = greeting();
 
   const riderList = riders.filter((r) => r.role === "rider");
-  const staffList = riders.filter((r) => r.role === "admin" || r.role === "founder");
+  // Founder is deliberately excluded from the visible Admin login list.
+  const staffList = riders.filter((r) => r.role === "admin");
+  const founderAccount = riders.find((r) => r.role === "founder");
 
   const tryLogin = (r) => {
     setPinFor(r); setPin(""); setErr("");
@@ -407,13 +411,13 @@ function LoginScreen({ riders, onLogin }) {
   return (
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"0 20px"}}>
       <div style={{textAlign:"center",marginBottom:24}}>
-        <h1 className="font-display glow" style={{fontSize:30,fontWeight:800,color:"#F5A623"}}>RIDER OPS</h1>
+        <h1 className="font-display glow" onClick={() => setLogoTaps((n) => { const next = n + 1; if (next >= 5) { setFounderMode(true); setAdminMode(false); setPinFor(null); return 0; } return next; })} style={{fontSize:30,fontWeight:800,color:"#F5A623",cursor:"default",userSelect:"none"}}>RIDER OPS</h1>
         <p style={{fontSize:12,color:"#7C8592",marginTop:4,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
           <Icon size={12} style={{color}}/> {text}
         </p>
       </div>
 
-      {!pinFor && !adminMode ? (
+      {!pinFor && !adminMode && !founderMode ? (
         <div style={{maxWidth:360,margin:"0 auto",width:"100%",display:"flex",flexDirection:"column",gap:8}}>
           <p style={{fontSize:11,color:"#7C8592",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Choose your name</p>
           {riderList.map((r) => (
@@ -422,12 +426,12 @@ function LoginScreen({ riders, onLogin }) {
             </button>
           ))}
           <button onClick={()=>setAdminMode(true)} style={{background:"none",border:"none",color:"#5B6270",fontSize:11,marginTop:10,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-            <ShieldCheck size={12}/> Admin / Founder Login
+            <ShieldCheck size={12}/> Admin Login
           </button>
         </div>
       ) : !pinFor && adminMode ? (
         <div style={{maxWidth:360,margin:"0 auto",width:"100%",display:"flex",flexDirection:"column",gap:8}}>
-          <p style={{fontSize:11,color:"#7C8592",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Admin / Founder</p>
+          <p style={{fontSize:11,color:"#7C8592",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Admin Login</p>
           {staffList.map((r) => (
             <button key={r.id} onClick={()=>tryLogin(r)} className="card" style={{textAlign:"left",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",color:"#EDEAE1"}}>
               <span style={{fontWeight:600,fontSize:14,color:"#EDEAE1"}}>{r.name}</span>
@@ -435,6 +439,16 @@ function LoginScreen({ riders, onLogin }) {
             </button>
           ))}
           <button onClick={()=>setAdminMode(false)} style={{background:"none",border:"none",color:"#7C8592",fontSize:12,marginTop:8,cursor:"pointer"}}>← Back to rider list</button>
+        </div>
+      ) : !pinFor && founderMode ? (
+        <div style={{maxWidth:360,margin:"0 auto",width:"100%",display:"flex",flexDirection:"column",gap:8}}>
+          <p style={{fontSize:11,color:"#F5A623",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>Founder Access</p>
+          {founderAccount ? (
+            <button onClick={()=>tryLogin(founderAccount)} className="card" style={{textAlign:"left",cursor:"pointer",color:"#EDEAE1"}}>
+              <span style={{fontWeight:600,fontSize:14}}>{founderAccount.name}</span>
+            </button>
+          ) : <p style={{fontSize:12,color:"#E5484D"}}>Founder account not configured.</p>}
+          <button onClick={()=>{setFounderMode(false);setLogoTaps(0);}} style={{background:"none",border:"none",color:"#7C8592",fontSize:12,marginTop:8,cursor:"pointer"}}>← Back</button>
         </div>
       ) : (
         <div style={{maxWidth:360,margin:"0 auto",width:"100%",display:"flex",flexDirection:"column",gap:10}}>
@@ -1552,7 +1566,7 @@ function RidersTab({ riders, isFounder, officeSetting }) {
         </div>
       )}
       <div className="list-card">
-        {riders.map(r=>(
+        {riders.filter(r => isFounder || r.role !== "founder").map(r=>(
           <div key={r.id} className="list-row">
             <div>
               <div style={{fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
