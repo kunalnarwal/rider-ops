@@ -221,6 +221,17 @@ export default function App() {
   const [lateNotices] = useCollection("lateNotices");
   const [settings] = useCollection("settings");
   const [adminRequests] = useCollection("adminRequests");
+  const [visits] = useCollection("visits", "visitedAtMs");
+
+  // Record one visit per signed-in user per browser tab session.
+  useEffect(() => {
+    if (!user?.id) return;
+    const key = `riderops_visit_logged_${user.id}`;
+    try { if (sessionStorage.getItem(key)) return; } catch {}
+    addRec("visits", { userId: user.id, userName: user.name || "Unknown", role: user.role || "unknown", visitedAtMs: Date.now(), visitedAt: serverTimestamp(), userAgent: navigator.userAgent || "" })
+      .then(() => { try { sessionStorage.setItem(key, "1"); } catch {} })
+      .catch((err) => console.error("Could not record app visit", err));
+  }, [user?.id]);
   const officeSetting = settings.find((s) => s.id === "office" || s.type === "office");
 
   // seed a founder account if riders collection is totally empty
@@ -323,7 +334,7 @@ export default function App() {
       <main style={{padding:"16px",paddingBottom:40,maxWidth:640,margin:"0 auto"}}>
         {tab==="home" && <HomeTab user={user} isAdmin={isAdmin} isFounder={isFounder} riders={riders} leaves={leaves} rounds={rounds}
           duty={duty} attendance={attendance} isHoliday={isHoliday} setTab={setTab} riderName={riderName}
-          lateNotices={lateNotices} officeSetting={officeSetting}/>}
+          lateNotices={lateNotices} officeSetting={officeSetting} visits={visits}/>}
         {tab==="leave" && <LeaveTab user={user} isAdmin={isAdmin} isFounder={isFounder} riders={riders} leaves={leaves} riderName={riderName} isHoliday={isHoliday}/>}
         {tab==="rounds" && <RoundsTab user={user} isAdmin={isAdmin} isFounder={isFounder} riders={riders} rounds={rounds} riderName={riderName}/>}
         {tab==="mileage" && <MileageTab user={user} isAdmin={isAdmin} riders={riders} odometer={odometer} riderName={riderName}/>}
@@ -500,7 +511,7 @@ function LoginScreen({ riders, onLogin }) {
 }
 
 // ---------------- Home ----------------
-function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, attendance, isHoliday, setTab, riderName, lateNotices, officeSetting }) {
+function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, attendance, isHoliday, setTab, riderName, lateNotices, officeSetting, visits = [] }) {
   const today = todayISO();
 
   // Congratulate the rider if they won Rider of the Month for the most recently
@@ -598,8 +609,26 @@ function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, atten
     .filter((l) => (l.date === today || l.date === tomorrow) && l.status === "approved")
     .sort((a, b) => a.date.localeCompare(b.date));
 
+  const recentVisits = [...visits].sort((a,b)=>(Number(b.visitedAtMs)||0)-(Number(a.visitedAtMs)||0)).slice(0,20);
+
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {isAdmin && (
+        <div className="card">
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:10}}>
+            <div className="section-label" style={{marginBottom:0}}>Recent App Visits</div>
+            <span className="badge">Last 20</span>
+          </div>
+          {recentVisits.length === 0 ? <p style={{fontSize:12,color:"#7C8592"}}>No visit history recorded yet. New visits will appear here.</p> :
+            recentVisits.map((v) => <div key={v.id} className="list-row" style={{padding:"9px 0"}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600}}>{v.userName || "Unknown user"} <span style={{fontSize:10,color:"#8AA5FF",textTransform:"uppercase"}}>{v.role || ""}</span></div>
+                <div style={{fontSize:11,color:"#7C8592"}}>{v.visitedAtMs ? new Date(v.visitedAtMs).toLocaleString("en-IN", { dateStyle:"medium", timeStyle:"short" }) : "Time unavailable"}</div>
+              </div>
+            </div>)}
+          <p style={{fontSize:10,color:"#7C8592",marginTop:8}}>Records visits from the time this tracking feature is deployed; it cannot recover earlier visits.</p>
+        </div>
+      )}
       {notifStatus !== "granted" && notifStatus !== "unsupported" && (
         <button onClick={enableNotifs} className="card" style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",border:"1px solid rgba(245,166,35,0.4)",background:"rgba(245,166,35,0.08)",width:"100%",textAlign:"left"}}>
           <Bell size={18} color="#F5A623"/>
@@ -939,7 +968,6 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const [viewRiderId, setViewRiderId] = useState(isAdmin ? (riders.find(r=>r.role==="rider")?.id || "") : user.id);
   const [date, setDate] = useState(todayISO());
   const [drs, setDrs] = useState("");
-  const [drsError, setDrsError] = useState("");
   const [deliveryCount, setDeliveryCount] = useState("");
   const [closingRound, setClosingRound] = useState(null); // round object being closed
   const [returnedInput, setReturnedInput] = useState("");
@@ -956,10 +984,9 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const openRound = myRoundsToday.find(r=>!r.closed);
   const canAddNew = !openRound;
 
-  const isValidDrs = /^\d{19}$/.test(drs.trim());
   const startRound = async () => {
-    if (!isValidDrs) { setDrsError("This is not a DRS number. DRS number must contain exactly 19 digits."); return; }
-    if (!deliveryCount) return;
+    if (!/^\d{19}$/.test(drs.trim())) { alert("This is not a DRS number. Enter exactly 19 digits."); return; }
+    if (!deliveryCount || Number(deliveryCount) <= 0) return;
     const nextNum = myRoundsToday.length + 1;
     await addRec("rounds", {
       riderId: targetId, date, roundNumber: nextNum, drsNumber: drs.trim(),
@@ -1026,14 +1053,13 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
         <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
           <div className="section-label">Start Round {myRoundsToday.length+1}</div>
           <div style={{display:"flex",gap:8}}>
-            <input value={drs} onChange={(e)=>{ const value=e.target.value.replace(/\s/g, ""); setDrs(value); setDrsError(value && !/^\d{19}$/.test(value) ? "This is not a DRS number. Enter exactly 19 digits." : ""); }} inputMode="numeric" maxLength={19} placeholder="19-digit DRS Number (mandatory)" className="input" style={{flex:1}}/>
+            <input value={drs} onChange={(e)=>setDrs(e.target.value)} placeholder="DRS Number (mandatory)" className="input" style={{flex:1}}/>
             <button onClick={()=>setScanning(true)} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
               <ScanLine size={14}/> Scan
             </button>
           </div>
-          {drsError && <p role="alert" style={{fontSize:12,color:"#E5484D",marginTop:-4}}>{drsError}</p>}
           <input type="number" value={deliveryCount} onChange={(e)=>setDeliveryCount(e.target.value)} placeholder="How many parcels are you taking" className="input font-mono"/>
-          <button onClick={startRound} disabled={!isValidDrs || !deliveryCount} className="btn-primary">Start Round</button>
+          <button onClick={startRound} disabled={!/^\d{19}$/.test(drs.trim()) || !deliveryCount || Number(deliveryCount) <= 0} className="btn-primary">Start Round</button>
         </div>
       ) : (
         <div className="card" style={{borderColor:"rgba(245,166,35,0.4)",background:"rgba(245,166,35,0.08)"}}>
@@ -1152,7 +1178,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
       )}
 
       {scanning && (
-        <BarcodeScanModal onDetect={(val)=>{ const clean=String(val||"").replace(/\s/g, ""); setScanning(false); if (/^\d{19}$/.test(clean)) { setDrs(clean); setDrsError(""); } else { setDrs(""); setDrsError("This is not a DRS number. The scanned code must contain exactly 19 digits."); } }} onClose={()=>setScanning(false)} />
+        <BarcodeScanModal onDetect={(val)=>{ setDrs(val); setScanning(false); }} onClose={()=>setScanning(false)} />
       )}
     </div>
   );
@@ -1161,47 +1187,80 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
 function BarcodeScanModal({ onDetect, onClose }) {
   const videoRef = useRef(null);
   const [error, setError] = useState("");
+  const [starting, setStarting] = useState(true);
 
   useEffect(() => {
     let stream, raf, stopped = false, detector;
+    const stopStream = () => { if (stream) stream.getTracks().forEach((track) => track.stop()); };
     (async () => {
+      if (!window.isSecureContext) {
+        setError("Camera requires a secure HTTPS connection. Open Rider Ops using its https:// website address.");
+        setStarting(false); return;
+      }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setError("This browser does not provide camera access. Update Chrome or type the 19-digit DRS number manually.");
+        setStarting(false); return;
+      }
       if (!("BarcodeDetector" in window)) {
-        setError("Barcode scanning isn't supported on this browser/device. Please type the DRS number manually.");
-        return;
+        setError("Barcode scanning is not supported by this browser. Type the 19-digit DRS number manually, or use an updated Chrome browser.");
+        setStarting(false); return;
       }
       try {
         detector = new window.BarcodeDetector();
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        if (stopped) { stream.getTracks().forEach(t=>t.stop()); return; }
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+        } catch (firstError) {
+          // Some phones fail on the rear-camera constraint; retry with any available camera.
+          if (firstError?.name === "NotAllowedError" || firstError?.name === "SecurityError") throw firstError;
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+        if (stopped) { stopStream(); return; }
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
+        setStarting(false);
         const tick = async () => {
           if (stopped) return;
           try {
             const codes = await detector.detect(videoRef.current);
-            if (codes.length > 0) { onDetect(codes[0].rawValue); return; }
+            if (codes.length > 0) {
+              const value = String(codes[0].rawValue || "").trim();
+              if (/^\d{19}$/.test(value)) { onDetect(value); return; }
+              setError("This is not a DRS number. The scanned code must contain exactly 19 digits. Please scan again or enter it manually.");
+              setStarting(false);
+              // Keep camera alive so the rider can try scanning another label.
+            }
           } catch {}
           raf = requestAnimationFrame(tick);
         };
         tick();
       } catch (e) {
-        setError("Camera access denied or unavailable. Please type the DRS number manually.");
+        const name = e?.name || "";
+        if (name === "NotAllowedError" || name === "PermissionDeniedError" || name === "SecurityError") {
+          setError("Camera permission is blocked. In Chrome, tap the site icon beside the address → Permissions → Camera → Allow, then reload Rider Ops.");
+        } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+          setError("No camera was found on this device. Type the 19-digit DRS number manually.");
+        } else if (name === "NotReadableError" || name === "TrackStartError") {
+          setError("The camera is busy in another app. Close Camera/WhatsApp video, then try again.");
+        } else {
+          setError("Camera could not start. Check site camera permission, close other apps using the camera, and try again. You can also type the 19-digit DRS number manually.");
+        }
+        setStarting(false);
       }
     })();
-    return () => { stopped = true; if (raf) cancelAnimationFrame(raf); if (stream) stream.getTracks().forEach(t=>t.stop()); };
-  }, []);
+    return () => { stopped = true; if (raf) cancelAnimationFrame(raf); stopStream(); };
+  }, [onDetect]);
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:60,padding:20}}>
       {error ? (
-        <div className="card" style={{maxWidth:320,textAlign:"center"}}>
+        <div className="card" style={{maxWidth:360,textAlign:"center"}}>
           <p style={{fontSize:13,color:"#E5484D",marginBottom:12}}>{error}</p>
-          <button onClick={onClose} className="btn-primary">Close</button>
+          <button onClick={() => { setError(""); setStarting(true); onClose(); }} className="btn-primary">Close Scanner</button>
         </div>
       ) : (
         <>
-          <video ref={videoRef} style={{width:"100%",maxWidth:360,borderRadius:12}} muted playsInline/>
-          <p style={{color:"#B9C0CA",fontSize:12,marginTop:12}}>Point camera at the barcode</p>
+          <video ref={videoRef} style={{width:"100%",maxWidth:360,borderRadius:12,background:"#111"}} muted playsInline/>
+          <p style={{color:"#B9C0CA",fontSize:12,marginTop:12}}>{starting ? "Starting camera…" : "Point camera at the 19-digit DRS barcode"}</p>
           <button onClick={onClose} className="btn-ghost" style={{marginTop:12}}>Cancel</button>
         </>
       )}
