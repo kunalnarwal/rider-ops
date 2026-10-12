@@ -939,6 +939,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const [viewRiderId, setViewRiderId] = useState(isAdmin ? (riders.find(r=>r.role==="rider")?.id || "") : user.id);
   const [date, setDate] = useState(todayISO());
   const [drs, setDrs] = useState("");
+  const [drsError, setDrsError] = useState("");
   const [deliveryCount, setDeliveryCount] = useState("");
   const [closingRound, setClosingRound] = useState(null); // round object being closed
   const [returnedInput, setReturnedInput] = useState("");
@@ -955,8 +956,10 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const openRound = myRoundsToday.find(r=>!r.closed);
   const canAddNew = !openRound;
 
+  const isValidDrs = /^\d{19}$/.test(drs.trim());
   const startRound = async () => {
-    if (!drs.trim() || !deliveryCount) return;
+    if (!isValidDrs) { setDrsError("This is not a DRS number. DRS number must contain exactly 19 digits."); return; }
+    if (!deliveryCount) return;
     const nextNum = myRoundsToday.length + 1;
     await addRec("rounds", {
       riderId: targetId, date, roundNumber: nextNum, drsNumber: drs.trim(),
@@ -1023,13 +1026,14 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
         <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
           <div className="section-label">Start Round {myRoundsToday.length+1}</div>
           <div style={{display:"flex",gap:8}}>
-            <input value={drs} onChange={(e)=>setDrs(e.target.value)} placeholder="DRS Number (mandatory)" className="input" style={{flex:1}}/>
+            <input value={drs} onChange={(e)=>{ const value=e.target.value.replace(/\s/g, ""); setDrs(value); setDrsError(value && !/^\d{19}$/.test(value) ? "This is not a DRS number. Enter exactly 19 digits." : ""); }} inputMode="numeric" maxLength={19} placeholder="19-digit DRS Number (mandatory)" className="input" style={{flex:1}}/>
             <button onClick={()=>setScanning(true)} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
               <ScanLine size={14}/> Scan
             </button>
           </div>
+          {drsError && <p role="alert" style={{fontSize:12,color:"#E5484D",marginTop:-4}}>{drsError}</p>}
           <input type="number" value={deliveryCount} onChange={(e)=>setDeliveryCount(e.target.value)} placeholder="How many parcels are you taking" className="input font-mono"/>
-          <button onClick={startRound} disabled={!drs.trim() || !deliveryCount} className="btn-primary">Start Round</button>
+          <button onClick={startRound} disabled={!isValidDrs || !deliveryCount} className="btn-primary">Start Round</button>
         </div>
       ) : (
         <div className="card" style={{borderColor:"rgba(245,166,35,0.4)",background:"rgba(245,166,35,0.08)"}}>
@@ -1148,7 +1152,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
       )}
 
       {scanning && (
-        <BarcodeScanModal onDetect={(val)=>{ setDrs(val); setScanning(false); }} onClose={()=>setScanning(false)} />
+        <BarcodeScanModal onDetect={(val)=>{ const clean=String(val||"").replace(/\s/g, ""); setScanning(false); if (/^\d{19}$/.test(clean)) { setDrs(clean); setDrsError(""); } else { setDrs(""); setDrsError("This is not a DRS number. The scanned code must contain exactly 19 digits."); } }} onClose={()=>setScanning(false)} />
       )}
     </div>
   );
