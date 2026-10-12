@@ -981,13 +981,13 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
 
   const targetId = isAdmin ? viewRiderId : user.id;
   const myRoundsToday = useMemo(()=> rounds.filter(r=>r.riderId===targetId && r.date===date).sort((a,b)=>a.roundNumber-b.roundNumber), [rounds, targetId, date]);
-  const openRound = myRoundsToday.find(r=>!r.closed);
-  const canAddNew = !openRound;
+  const openRounds = myRoundsToday.filter(r=>!r.closed);
+  const nextRoundNumber = myRoundsToday.reduce((max, r) => Math.max(max, Number(r.roundNumber) || 0), 0) + 1;
 
   const startRound = async () => {
     if (!/^\d{19}$/.test(drs.trim())) { alert("This is not a DRS number. Enter exactly 19 digits."); return; }
     if (!deliveryCount || Number(deliveryCount) <= 0) return;
-    const nextNum = myRoundsToday.length + 1;
+    const nextNum = nextRoundNumber;
     await addRec("rounds", {
       riderId: targetId, date, roundNumber: nextNum, drsNumber: drs.trim(),
       deliveryCount: parseInt(deliveryCount,10), closed:false, pickupCount:null, returnedCount:null, deliveredFinal:null,
@@ -1049,24 +1049,18 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
         <p style={{fontSize:11,color:"#F5A623",textAlign:"center"}}>{dayPendingCount} round(s) closed but awaiting Admin/Founder approval — not counted yet.</p>
       )}
 
-      {canAddNew ? (
-        <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
-          <div className="section-label">Start Round {myRoundsToday.length+1}</div>
-          <div style={{display:"flex",gap:8}}>
-            <input value={drs} onChange={(e)=>setDrs(e.target.value)} placeholder="DRS Number (mandatory)" className="input" style={{flex:1}}/>
-            <button onClick={()=>setScanning(true)} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
-              <ScanLine size={14}/> Scan
-            </button>
-          </div>
-          <input type="number" value={deliveryCount} onChange={(e)=>setDeliveryCount(e.target.value)} placeholder="How many parcels are you taking" className="input font-mono"/>
-          <button onClick={startRound} disabled={!/^\d{19}$/.test(drs.trim()) || !deliveryCount || Number(deliveryCount) <= 0} className="btn-primary">Start Round</button>
+      <div className="card" style={{display:"flex",flexDirection:"column",gap:10,borderColor: openRounds.length ? "rgba(245,166,35,0.45)" : undefined}}>
+        <div className="section-label">Start Round {nextRoundNumber}</div>
+        {openRounds.length > 0 && <p style={{fontSize:12,color:"#F5A623",margin:0}}>You can start another DRS for newly received parcels even while an earlier round is still open. Close each round separately when finished.</p>}
+        <div style={{display:"flex",gap:8}}>
+          <input value={drs} onChange={(e)=>setDrs(e.target.value)} placeholder="DRS Number (mandatory)" className="input" style={{flex:1}}/>
+          <button onClick={()=>setScanning(true)} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
+            <ScanLine size={14}/> Scan
+          </button>
         </div>
-      ) : (
-        <div className="card" style={{borderColor:"rgba(245,166,35,0.4)",background:"rgba(245,166,35,0.08)"}}>
-          <p style={{fontSize:13,marginBottom:10}}>Round {openRound.roundNumber} is not closed yet — DRS {openRound.drsNumber}, took {openRound.deliveryCount} parcels. Close it before starting the next round.</p>
-          <button onClick={()=>openCloseModal(openRound)} className="btn-primary">Close Round {openRound.roundNumber}</button>
-        </div>
-      )}
+        <input type="number" value={deliveryCount} onChange={(e)=>setDeliveryCount(e.target.value)} placeholder="How many parcels are you taking" className="input font-mono"/>
+        <button onClick={startRound} disabled={!/^\d{19}$/.test(drs.trim()) || !deliveryCount || Number(deliveryCount) <= 0} className="btn-primary">Start Round {nextRoundNumber}</button>
+      </div>
 
       <div>
         <div className="section-label">Today's Rounds</div>
@@ -1083,7 +1077,10 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
                   </div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  {!r.closed && <span className="badge badge-pending">open</span>}
+                  {!r.closed && <>
+                    <span className="badge badge-pending">open</span>
+                    <button onClick={()=>openCloseModal(r)} className="btn-primary" style={{padding:"5px 8px",fontSize:10}}>Close Round {r.roundNumber}</button>
+                  </>}
                   {r.closed && r.approved==="pending" && <span className="badge badge-pending">awaiting approval</span>}
                   {r.closed && r.approved==="approved" && <span className="badge badge-approved">approved</span>}
                   {r.closed && r.approved==="rejected" && <span className="badge badge-rejected">rejected</span>}
