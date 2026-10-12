@@ -197,6 +197,7 @@ const TABS = [
   { id: "adminfuel", label: "Company Fuel", icon: Fuel, adminOnly: true },
   { id: "riders", label: "Riders", icon: Users, adminOnly: true },
   { id: "reports", label: "Reports", icon: FileText, adminOnly: true },
+  { id: "visits", label: "Recent Visits", icon: Clock, founderOnly: true },
 ];
 
 export default function App() {
@@ -298,7 +299,7 @@ export default function App() {
     return <LoginScreen riders={riders} onLogin={login} />;
   }
 
-  const visibleTabs = TABS.filter((t) => !t.adminOnly || isAdmin);
+  const visibleTabs = TABS.filter((t) => (!t.adminOnly || isAdmin) && (!t.founderOnly || isFounder));
 
   return (
     <div>
@@ -334,7 +335,7 @@ export default function App() {
       <main style={{padding:"16px",paddingBottom:40,maxWidth:640,margin:"0 auto"}}>
         {tab==="home" && <HomeTab user={user} isAdmin={isAdmin} isFounder={isFounder} riders={riders} leaves={leaves} rounds={rounds}
           duty={duty} attendance={attendance} isHoliday={isHoliday} setTab={setTab} riderName={riderName}
-          lateNotices={lateNotices} officeSetting={officeSetting} visits={visits}/>}
+          lateNotices={lateNotices} officeSetting={officeSetting}/>}
         {tab==="leave" && <LeaveTab user={user} isAdmin={isAdmin} isFounder={isFounder} riders={riders} leaves={leaves} riderName={riderName} isHoliday={isHoliday}/>}
         {tab==="rounds" && <RoundsTab user={user} isAdmin={isAdmin} isFounder={isFounder} riders={riders} rounds={rounds} riderName={riderName}/>}
         {tab==="mileage" && <MileageTab user={user} isAdmin={isAdmin} riders={riders} odometer={odometer} riderName={riderName}/>}
@@ -348,6 +349,7 @@ export default function App() {
         {tab==="riders" && isAdmin && <RidersTab user={user} riders={riders} isFounder={isFounder} officeSetting={officeSetting} adminRequests={adminRequests}/>}
         {tab==="reports" && isAdmin && <ReportsTab riders={riders} leaves={leaves} rounds={rounds} odometer={odometer}
           adminFuel={adminFuel} personalFuel={personalFuel} attendance={attendance} riderName={riderName} duty={duty}/>}
+        {tab==="visits" && isFounder && <RecentVisitsTab visits={visits}/> }
       </main>
 
       {editingProfile && (
@@ -511,7 +513,7 @@ function LoginScreen({ riders, onLogin }) {
 }
 
 // ---------------- Home ----------------
-function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, attendance, isHoliday, setTab, riderName, lateNotices, officeSetting, visits = [] }) {
+function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, attendance, isHoliday, setTab, riderName, lateNotices, officeSetting }) {
   const today = todayISO();
 
   // Congratulate the rider if they won Rider of the Month for the most recently
@@ -609,26 +611,8 @@ function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, atten
     .filter((l) => (l.date === today || l.date === tomorrow) && l.status === "approved")
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  const recentVisits = [...visits].sort((a,b)=>(Number(b.visitedAtMs)||0)-(Number(a.visitedAtMs)||0)).slice(0,20);
-
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      {isAdmin && (
-        <div className="card">
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:10}}>
-            <div className="section-label" style={{marginBottom:0}}>Recent App Visits</div>
-            <span className="badge">Last 20</span>
-          </div>
-          {recentVisits.length === 0 ? <p style={{fontSize:12,color:"#7C8592"}}>No visit history recorded yet. New visits will appear here.</p> :
-            recentVisits.map((v) => <div key={v.id} className="list-row" style={{padding:"9px 0"}}>
-              <div style={{minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:600}}>{v.userName || "Unknown user"} <span style={{fontSize:10,color:"#8AA5FF",textTransform:"uppercase"}}>{v.role || ""}</span></div>
-                <div style={{fontSize:11,color:"#7C8592"}}>{v.visitedAtMs ? new Date(v.visitedAtMs).toLocaleString("en-IN", { dateStyle:"medium", timeStyle:"short" }) : "Time unavailable"}</div>
-              </div>
-            </div>)}
-          <p style={{fontSize:10,color:"#7C8592",marginTop:8}}>Records visits from the time this tracking feature is deployed; it cannot recover earlier visits.</p>
-        </div>
-      )}
       {notifStatus !== "granted" && notifStatus !== "unsupported" && (
         <button onClick={enableNotifs} className="card" style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",border:"1px solid rgba(245,166,35,0.4)",background:"rgba(245,166,35,0.08)",width:"100%",textAlign:"left"}}>
           <Bell size={18} color="#F5A623"/>
@@ -854,6 +838,28 @@ function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, atten
     </div>
   );
 }
+function RecentVisitsTab({ visits = [] }) {
+  const recentVisits = [...visits]
+    .sort((a, b) => (Number(b.visitedAtMs) || 0) - (Number(a.visitedAtMs) || 0))
+    .slice(0, 20);
+  return (
+    <div className="card">
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:10}}>
+        <div className="section-label" style={{marginBottom:0}}>Recent App Visits</div>
+        <span className="badge">Last 20</span>
+      </div>
+      {recentVisits.length === 0 ? <p style={{fontSize:12,color:"#7C8592"}}>No visit history recorded yet. New visits will appear here.</p> :
+        recentVisits.map((v) => <div key={v.id} className="list-row" style={{padding:"9px 0"}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600}}>{v.userName || "Unknown user"} <span style={{fontSize:10,color:"#8AA5FF",textTransform:"uppercase"}}>{v.role || ""}</span></div>
+            <div style={{fontSize:11,color:"#7C8592"}}>{v.visitedAtMs ? new Date(v.visitedAtMs).toLocaleString("en-IN", { dateStyle:"medium", timeStyle:"short" }) : "Time unavailable"}</div>
+          </div>
+        </div>)}
+      <p style={{fontSize:10,color:"#7C8592",marginTop:8}}>Records visits from the time this tracking feature is deployed; it cannot recover earlier visits.</p>
+    </div>
+  );
+}
+
 function StatCard({ label, value, color }) {
   return (
     <div className="card">
@@ -969,6 +975,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const [date, setDate] = useState(todayISO());
   const [drs, setDrs] = useState("");
   const [deliveryCount, setDeliveryCount] = useState("");
+  const [weightKg, setWeightKg] = useState(""); // optional total parcel weight for this DRS
   const [closingRound, setClosingRound] = useState(null); // round object being closed
   const [returnedInput, setReturnedInput] = useState("");
   const [hadReturns, setHadReturns] = useState(null); // true/false
@@ -987,12 +994,13 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const startRound = async () => {
     if (!/^\d{19}$/.test(drs.trim())) { alert("This is not a DRS number. Enter exactly 19 digits."); return; }
     if (!deliveryCount || Number(deliveryCount) <= 0) return;
+    if (weightKg !== "" && (!Number.isFinite(Number(weightKg)) || Number(weightKg) <= 0)) { alert("Enter a valid weight in kg, or leave it blank."); return; }
     const nextNum = nextRoundNumber;
     await addRec("rounds", {
       riderId: targetId, date, roundNumber: nextNum, drsNumber: drs.trim(),
-      deliveryCount: parseInt(deliveryCount,10), closed:false, pickupCount:null, returnedCount:null, deliveredFinal:null,
+      deliveryCount: parseInt(deliveryCount,10), weightKg: weightKg === "" ? null : Number(weightKg), closed:false, pickupCount:null, returnedCount:null, deliveredFinal:null,
     });
-    setDrs(""); setDeliveryCount("");
+    setDrs(""); setDeliveryCount(""); setWeightKg("");
   };
 
   const openCloseModal = (r) => { setClosingRound(r); setHadReturns(null); setHadPickup(null); setReturnedInput(""); setPickupInput(""); setSelectedPickupClients([]); setPickupQuantities({}); setShowOtherPickupClients(false); };
@@ -1059,6 +1067,8 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
           </button>
         </div>
         <input type="number" value={deliveryCount} onChange={(e)=>setDeliveryCount(e.target.value)} placeholder="How many parcels are you taking" className="input font-mono"/>
+        <input type="number" min="0.1" step="0.1" value={weightKg} onChange={(e)=>setWeightKg(e.target.value)} placeholder="Total parcel weight in kg (optional)" className="input font-mono"/>
+        <p style={{fontSize:11,color:"#7C8592",margin:"-4px 0 0"}}>Optional: add the approximate total weight of parcels in this DRS. Leave blank if unknown.</p>
         <button onClick={startRound} disabled={!/^\d{19}$/.test(drs.trim()) || !deliveryCount || Number(deliveryCount) <= 0} className="btn-primary">Start Round {nextRoundNumber}</button>
       </div>
 
@@ -1071,7 +1081,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
                 <div>
                   <div style={{fontSize:13,fontWeight:600}}>Round {r.roundNumber} · DRS {r.drsNumber}</div>
                   <div style={{fontSize:11,color:"#7C8592"}} className="font-mono">
-                    Out: {r.deliveryCount} {r.closed ? `· Delivered: ${r.deliveredFinal} · Returned: ${r.returnedCount} · Pickup: ${r.pickupCount}` : "· Pending closure"}
+                    Out: {r.deliveryCount}{r.weightKg != null ? ` · Weight: ${r.weightKg} kg` : ""} {r.closed ? `· Delivered: ${r.deliveredFinal} · Returned: ${r.returnedCount} · Pickup: ${r.pickupCount}` : "· Pending closure"}
                     {r.pickupDetails?.length > 0 && <div style={{fontSize:10,color:"#F5A623",marginTop:3}}>Clients: {r.pickupDetails.map((p)=>`${p.client} (${p.count})`).join(", ")}{r.pickupOtherCount ? `, Other (${r.pickupOtherCount})` : ""}</div>}
                     {r.approvedBy && <div style={{fontSize:10,color:"#8AA5FF",marginTop:3}}>{r.approved} by {r.approvedBy} · {r.approvedAtMs ? new Date(r.approvedAtMs).toLocaleString("en-IN") : "time unavailable"}</div>}
                   </div>
