@@ -17,20 +17,20 @@ const RATES = [2.5, 2.75];
 const PICKUP_CLIENTS = [
   "Agriwise", "Ambit", "AU Small Red", "AU Small Red 2nd Floor",
   "AU Bank Jindal Chowk", "Care Health", "Darcl Rishi Nagar", "Darcl Tilak Bazar",
-  "DCB Bank", "Equitas Bank", "Equitas Bank Jindal Chowk", "Finnova",
+  "DCB Bank", "Equitas Bank Red Square", "Equitas Bank Jindal Chowk", "Finnova",
   "Grihum Housing", "Indira IVF", "Indostar", "L&T", "Mahindra Housing",
-  "Muthoot Homefin", "Premarica", "Rajesh Pruthi", "Shubham Housing", "Tata Aia",
+  "Muthoot Homefin", "Premarica", "Rajesh Pruthi", "Shubham Housing", "Tata Aia", "Tata Aia Red Square",
   "Truehome", "Aquadyne", "Astro Praduman", "Gaurija Automation", "Ortho Solution",
   "Sai Courier Point", "United India", "Utsav Engineering"
 ];
 const RIDER_PICKUP_CLIENTS = {
   "Sunil Kumar": ["Agriwise", "Utsav Engineering"],
-  "Rajiv Kumar": ["AU Small Red", "AU Small Red 2nd Floor", "Finnova", "L&T", "Indostar", "DCB Bank", "Equitas Bank", "Care Health", "Darcl Tilak Bazar", "Darcl Rishi Nagar"],
-  "Rajeev Kumar": ["AU Small Red", "AU Small Red 2nd Floor", "Finnova", "L&T", "Indostar", "DCB Bank", "Equitas Bank", "Care Health", "Darcl Tilak Bazar", "Darcl Rishi Nagar"],
+  "Rajiv Kumar": ["AU Small Red", "AU Small Red 2nd Floor", "Finnova", "L&T", "Indostar", "DCB Bank", "Equitas Bank Red Square", "Care Health", "Darcl Tilak Bazar", "Darcl Rishi Nagar"],
+  "Rajeev Kumar": ["AU Small Red", "AU Small Red 2nd Floor", "Finnova", "L&T", "Indostar", "DCB Bank", "Equitas Bank Red Square", "Care Health", "Darcl Tilak Bazar", "Darcl Rishi Nagar", "Tata Aia Red Square"],
   "Suresh Kumar": ["Darcl Tilak Bazar", "Darcl Rishi Nagar", "Care Health", "Rajesh Pruthi"],
   "Vinod Kumar": ["AU Bank Jindal Chowk", "Equitas Bank Jindal Chowk", "Ambit", "Ortho Solution", "Gaurija Automation", "Muthoot Homefin", "Tata Aia", "Premarica", "Indira IVF", "United India", "Rajesh Pruthi"],
-  "Sandeep": ["Shubham Housing", "Aquadyne", "Astro Praduman", "Finnova", "DCB Bank", "Indostar"],
-  "Abhishek": ["Aquadyne", "Astro Praduman", "Care Health", "Finnova"]
+  "Sandeep": ["Shubham Housing", "Aquadyne", "Astro Praduman", "Finnova", "DCB Bank", "Indostar", "Tata Aia Red Square"],
+  "Abhishek": ["Aquadyne", "Astro Praduman", "Care Health", "Finnova", "Tata Aia Red Square"]
 };
 
 // Fixed-date holidays (same every year) + commonly-known 2026 dates for lunar/variable
@@ -70,19 +70,52 @@ function festivalSeedForYear(year) {
 function vikramSamvat(gregYear, month) { return month < 3 ? gregYear + 56 : gregYear + 57; }
 function sakaSamvat(gregYear, month) { return month < 3 ? gregYear - 79 : gregYear - 78; }
 
-// Approved rounds only, grouped by rider for one month — used by the Leaderboard,
-// Best Rider award, and Hall of Fame. A rider's count only grows once admin/founder
-// approves that day's round, so a rider can never inflate their own standing.
-function riderTotalsForMonth(rounds, mk) {
-  const totals = {};
-  rounds
-    .filter((r) => r.closed && r.approved === "approved" && monthKey(r.date) === mk)
-    .forEach((r) => {
-      totals[r.riderId] = (totals[r.riderId] || 0) + (r.deliveredFinal || 0) + (r.pickupCount || 0);
-    });
-  return Object.entries(totals)
-    .map(([riderId, total]) => ({ riderId, total }))
-    .sort((a, b) => b.total - a.total);
+// Monthly rider performance score: Delivery 60%, pickup stops 30%, punctuality/leave discipline 10%.
+// Only approved rounds count. Pickup is measured by client stops, not parcel quantity, so Rajesh Pruthi
+// can contribute at most one stop per round regardless of how many parcels were collected there.
+function riderTotalsForMonth(rounds, mk, duty = [], leaves = [], riders = []) {
+  const monthRounds = rounds.filter((r) => r.closed && r.approved === "approved" && monthKey(r.date) === mk);
+  const byRider = {};
+  const ensure = (id) => { if (!byRider[id]) byRider[id] = { riderId:id, out:0, delivered:0, pickupStops:0, punctualDuties:0, totalDuties:0, leaveDays:0 }; return byRider[id]; };
+  riders.filter((r) => r.role === "rider").forEach((r) => ensure(r.id));
+  monthRounds.forEach((r) => {
+    const x = ensure(r.riderId);
+    x.out += Math.max(0, Number(r.deliveryCount) || 0);
+    x.delivered += Math.max(0, Number(r.deliveredFinal) || 0);
+    const details = Array.isArray(r.pickupDetails) ? r.pickupDetails : [];
+    // Each client listed is one stop; parcel quantity never multiplies stop credit.
+    x.pickupStops += details.filter((p) => (Number(p.count) || 0) > 0).length;
+  });
+  const monthDuty = duty.filter((d) => monthKey(d.date) === mk);
+  monthDuty.forEach((d) => {
+    const x = ensure(d.riderId);
+    if (d.startTime == null) return;
+    x.totalDuties += 1;
+    const t = new Date(Number(d.startTime));
+    const mins = t.getHours()*60 + t.getMinutes();
+    const name = (riders.find(r=>r.id===d.riderId)?.name || "").toLowerCase();
+    const cutoff = d.period === "morning" ? 9*60+30 : (name === "rajeev kumar" ? 19*60+30 : 19*60);
+    if ((d.period === "morning" && mins < cutoff) || (d.period !== "morning" && mins <= cutoff)) x.punctualDuties += 1;
+  });
+  leaves.filter((l) => l.status === "approved" && monthKey(l.date) === mk).forEach((l) => {
+    const x = ensure(l.riderId);
+    // Half-day leave counts as half a leave day.
+    x.leaveDays += (l.halfDay || l.halfDayPeriod) ? 0.5 : 1;
+  });
+  const maxPickupStops = Math.max(1, ...Object.values(byRider).map(x=>x.pickupStops));
+  const [year, month] = mk.split("-").map(Number);
+  const elapsedDays = mk === monthKey(todayISO()) ? new Date(todayISO()+"T00:00:00").getDate() : new Date(year, month, 0).getDate();
+  return Object.values(byRider).map((x) => {
+    const deliveryPct = x.out > 0 ? x.delivered / x.out * 100 : 0;
+    const pickupPct = x.pickupStops / maxPickupStops * 100;
+    const punctualPct = x.totalDuties > 0 ? x.punctualDuties / x.totalDuties * 100 : 0;
+    const leaveFactor = Math.max(0, 1 - x.leaveDays / Math.max(1, elapsedDays));
+    const behaviourPct = punctualPct * leaveFactor;
+    const deliveryScore = deliveryPct * 0.60;
+    const pickupScore = pickupPct * 0.30;
+    const behaviourScore = behaviourPct * 0.10;
+    return { ...x, deliveryPct, pickupPct, behaviourPct, deliveryScore, pickupScore, behaviourScore, total: Math.round((deliveryScore+pickupScore+behaviourScore)*100)/100 };
+  }).sort((a,b)=>b.total-a.total);
 }
 function previousMonthKey(mk) {
   const [y, m] = mk.split("-").map(Number);
@@ -296,7 +329,7 @@ export default function App() {
         {tab==="mileage" && <MileageTab user={user} isAdmin={isAdmin} riders={riders} odometer={odometer} riderName={riderName}/>}
         {tab==="myfuel" && <MyFuelTab user={user} personalFuel={personalFuel}/>}
         {tab==="attendance" && <AttendanceTab user={user} isAdmin={isAdmin} riders={riders} attendance={attendance} leaves={leaves}/>}
-        {tab==="leaderboard" && <LeaderboardTab rounds={rounds} riders={riders} user={user} riderName={riderName}/>}
+        {tab==="leaderboard" && <LeaderboardTab rounds={rounds} riders={riders} user={user} riderName={riderName} duty={duty} leaves={leaves}/>}
         {tab==="calendar" && <CalendarTab holidays={holidays} leaves={leaves} riders={riders} user={user} isAdmin={isAdmin} riderName={riderName}/>}
         {tab==="panchang" && <PanchangTab/>}
         {tab==="announcements" && <AnnouncementsTab user={user} isAdmin={isAdmin} announcements={announcements}/>}
@@ -525,8 +558,8 @@ function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, atten
   }, [myMorningDuty, myEveningDuty]);
 
   const currentHour = new Date().getHours();
-  const eveningWindowOpen = currentHour >= 16; // Evening duty opens at 4 PM
-  const morningWindowOpen = currentHour < 16;  // Morning duty closes at 4 PM
+  const eveningWindowOpen = currentHour >= 17; // Evening duty opens at 5 PM
+  const morningWindowOpen = currentHour < 17;  // Morning duty closes at 5 PM
   const [checkingPeriod, setCheckingPeriod] = useState(null);
 
   const startDuty = async (period) => {
@@ -597,7 +630,7 @@ function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, atten
           ) : myMorningDuty && myMorningDuty.endTime ? (
             <p style={{fontSize:14,color:"#7C8592"}}>Completed — worked {fmtHours(myMorningDuty.endTime-myMorningDuty.startTime)}.</p>
           ) : !morningWindowOpen ? (
-            <p style={{fontSize:12,color:"#5B6270"}}>Closed after 4:00 PM.</p>
+            <p style={{fontSize:12,color:"#5B6270"}}>Closed after 5:00 PM.</p>
           ) : (
             <>
               <button onClick={()=>startDuty("morning")} disabled={checkingLoc && checkingPeriod==="morning"} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
@@ -626,7 +659,7 @@ function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, atten
           ) : myEveningDuty && myEveningDuty.endTime ? (
             <p style={{fontSize:14,color:"#7C8592"}}>Completed — worked {fmtHours(myEveningDuty.endTime-myEveningDuty.startTime)}.</p>
           ) : !eveningWindowOpen ? (
-            <p style={{fontSize:12,color:"#5B6270"}}>Opens at 4:00 PM.</p>
+            <p style={{fontSize:12,color:"#5B6270"}}>Opens at 5:00 PM.</p>
           ) : (
             <>
               <button onClick={()=>startDuty("evening")} disabled={checkingLoc && checkingPeriod==="evening"} className="btn-primary" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
@@ -1080,7 +1113,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
               const otherClients = PICKUP_CLIENTS.filter((client) => client !== "Other" && !assigned.includes(client));
               const orderedClients = showOtherPickupClients ? [...assigned, ...otherClients] : assigned;
               return (
-                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:"55vh",overflowY:"auto",overscrollBehavior:"contain",paddingRight:4}}>
                   <p style={{fontSize:11,color:"#7C8592"}}>Your regular pickup clients are shown first. Select each client and enter parcel quantities. Use Other only when you collected from a client not in your regular list.</p>
                   {orderedClients.map((client) => {
                     const selected = selectedPickupClients.includes(client);
@@ -1307,10 +1340,10 @@ function MyFuelTab({ user, personalFuel }) {
 }
 
 // ---------------- Calendar (monthly, holidays green, leave days red) ----------------
-function LeaderboardTab({ rounds, riders, user, riderName }) {
+function LeaderboardTab({ rounds, riders, user, riderName, duty = [], leaves = [] }) {
   const thisMonth = monthKey(todayISO());
   const monthLabel = new Date(todayISO()+"T00:00:00").toLocaleDateString("en-IN",{month:"long",year:"numeric"});
-  const current = riderTotalsForMonth(rounds, thisMonth);
+  const current = riderTotalsForMonth(rounds, thisMonth, duty, leaves, riders);
 
   // Build Hall of Fame: every past month (before this one) that has at least one
   // approved round, with its winner.
@@ -1321,7 +1354,7 @@ function LeaderboardTab({ rounds, riders, user, riderName }) {
   }, [rounds, thisMonth]);
 
   const hallOfFame = pastMonthKeys.map((mk) => {
-    const totals = riderTotalsForMonth(rounds, mk);
+    const totals = riderTotalsForMonth(rounds, mk, duty, leaves, riders);
     return { month: mk, winner: totals[0] };
   }).filter((h) => h.winner);
 
@@ -1332,7 +1365,7 @@ function LeaderboardTab({ rounds, riders, user, riderName }) {
       <div className="card" style={{textAlign:"center"}}>
         <Trophy size={24} color="#F5A623" style={{marginBottom:6}}/>
         <div className="font-display" style={{fontSize:16,fontWeight:700}}>Leaderboard — {monthLabel}</div>
-        <p style={{fontSize:11,color:"#7C8592",marginTop:4}}>Only admin/founder-approved deliveries & pickups count.</p>
+        <p style={{fontSize:11,color:"#7C8592",marginTop:4}}>Overall score: Delivery 60% · Pickup stops 30% · On-time & leave discipline 10%. Only approved rounds count.</p>
       </div>
 
       <div className="list-card">
@@ -1340,13 +1373,14 @@ function LeaderboardTab({ rounds, riders, user, riderName }) {
           <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No approved rounds yet this month.</div>
         ) : current.map((entry, i) => (
           <div key={entry.riderId} className="list-row" style={entry.riderId===user.id ? {background:"rgba(245,166,35,0.07)"} : {}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <div className="font-mono" style={{fontSize:14,color:i===0?"#F5A623":"#7C8592",width:20}}>
-                {i===0 ? <Trophy size={16} color="#F5A623"/> : `#${i+1}`}
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div className="font-mono" style={{fontSize:14,color:i===0?"#F5A623":"#7C8592",width:20}}>{i===0 ? <Trophy size={16} color="#F5A623"/> : `#${i+1}`}</div>
+                <div style={{fontSize:13,fontWeight:600}}>{riderName(entry.riderId)}{entry.riderId===user.id && " (You)"}</div>
               </div>
-              <div style={{fontSize:13,fontWeight:600}}>{riderName(entry.riderId)}{entry.riderId===user.id && " (You)"}</div>
+              <div style={{fontSize:10,color:"#7C8592",marginTop:5,marginLeft:30}}>Delivery {entry.deliveryPct.toFixed(1)}% · Pickup {entry.pickupPct.toFixed(1)}% · Behaviour {entry.behaviourPct.toFixed(1)}%</div>
             </div>
-            <div className="font-mono" style={{fontSize:14,color:"#3DDC97"}}>{entry.total}</div>
+            <div style={{textAlign:"right",marginLeft:8}}><div className="font-mono" style={{fontSize:15,color:"#3DDC97"}}>{entry.total.toFixed(1)}%</div><div style={{fontSize:9,color:"#7C8592"}}>overall</div></div>
           </div>
         ))}
       </div>
