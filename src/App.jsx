@@ -1000,6 +1000,8 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const [returnedInput, setReturnedInput] = useState("");
   const [undeliveredReason, setUndeliveredReason] = useState("");
   const [rtoDocket, setRtoDocket] = useState("");
+  const [rtoServiceType, setRtoServiceType] = useState("normal");
+  const [scanTarget, setScanTarget] = useState("drs");
   const [returnDisposition, setReturnDisposition] = useState("undelivered");
   const [pickupWeightKg, setPickupWeightKg] = useState("");
   const [hadReturns, setHadReturns] = useState(null); // true/false
@@ -1036,9 +1038,11 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
     setDrs(""); setDeliveryCount(""); setWeightKg("");
   };
 
-  const openCloseModal = (r) => { setClosingRound(r); setHadReturns(null); setHadPickup(null); setReturnedInput(""); setUndeliveredReason(""); setRtoDocket(""); setReturnDisposition("undelivered"); setPickupInput(""); setSelectedPickupClients([]); setPickupQuantities({}); setShowOtherPickupClients(false); };
+  const openCloseModal = (r) => { setClosingRound(r); setHadReturns(null); setHadPickup(null); setReturnedInput(""); setUndeliveredReason(""); setRtoDocket(""); setRtoServiceType("normal"); setReturnDisposition("undelivered"); setPickupInput(""); setSelectedPickupClients([]); setPickupQuantities({}); setShowOtherPickupClients(false); };
   const confirmClose = async () => {
     if (hadReturns === null || hadPickup === null) return;
+    const returnCount = hadReturns ? (parseInt(returnedInput,10) || 0) : 0;
+    if (returnCount > 0 && returnDisposition === "rto") { const expected = rtoServiceType === "premium" ? 11 : 14; if (!new RegExp(`^\\d{${expected}}$`).test(rtoDocket.trim())) { alert(`${rtoServiceType === "premium" ? "Premium / Fast Track" : "Normal"} RTO docket must contain exactly ${expected} digits. Scan or enter it again.`); return; } }
     const returned = hadReturns ? (parseInt(returnedInput,10) || 0) : 0;
     const pickupDetails = hadPickup ? selectedPickupClients
       .filter((client) => client !== "Other")
@@ -1119,8 +1123,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
         <div className="list-card">
           {myRoundsToday.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No rounds yet.</div> :
             myRoundsToday.map(r=>(
-              <div key={r.id} className="list-row">
-                <div>
+              <div key={r.id} className="list-row" style={{overflowX:"auto",alignItems:"flex-start",gap:14}}><div style={{minWidth:240,flex:"1 0 240px"}}>
                   <div style={{fontSize:13,fontWeight:600}}>{r.roundType === "pickup" ? `Pickup Round ${r.roundNumber}` : `Delivery Round ${r.roundNumber} · DRS ${r.drsNumber}`}</div>
                   <div style={{fontSize:11,color:"#7C8592"}} className="font-mono">
                     Out: {r.roundType === "pickup" ? `Pickup parcels: ${r.pickupCount ?? 0}` : r.deliveryCount}{r.weightKg != null ? ` · Weight: ${r.weightKg} kg` : ""} {r.roundType === "pickup" ? "" : (r.closed ? `· Delivered: ${r.deliveredFinal} · Returned: ${r.returnedCount} · Pickup: ${r.pickupCount}` : "· Pending closure")}
@@ -1128,7 +1131,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
                     {r.approvedBy && <div style={{fontSize:10,color:"#8AA5FF",marginTop:3}}>{r.approved} by {r.approvedBy} · {r.approvedAtMs ? new Date(r.approvedAtMs).toLocaleString("en-IN") : "time unavailable"}</div>}
                   </div>
                 </div>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flex:"0 0 auto",minWidth:"max-content",paddingBottom:4}}>
                   {!r.closed && r.roundType !== "pickup" && <>
                     <span className="badge badge-pending">open</span>
                     <button onClick={()=>openCloseModal(r)} className="btn-primary" style={{padding:"5px 8px",fontSize:10}}>Close Round {r.roundNumber}</button>
@@ -1204,8 +1207,11 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
               <label style={{fontSize:12,color:"#EDEAE1"}}>Parcel status</label>
               <select value={returnDisposition} onChange={e=>setReturnDisposition(e.target.value)} className="input"><option value="undelivered">Undelivered / attempt failed</option><option value="rto">RTO</option></select>
               {returnDisposition === "rto" && <>
-                <label style={{fontSize:12,color:"#EDEAE1"}}>RTO docket number (required)</label>
-                <input value={rtoDocket} onChange={e=>setRtoDocket(e.target.value)} placeholder="Enter RTO docket number" className="input font-mono"/>
+                <label style={{fontSize:12,color:"#EDEAE1"}}>RTO service type</label>
+                <select value={rtoServiceType} onChange={e=>{setRtoServiceType(e.target.value);setRtoDocket("");}} className="input"><option value="normal">Normal — 14 digit docket</option><option value="premium">Premium / Fast Track — 11 digit docket</option></select>
+                <label style={{fontSize:12,color:"#EDEAE1"}}>RTO docket number (required, {rtoServiceType === "premium" ? "11" : "14"} digits)</label>
+                <div style={{display:"flex",gap:8}}><input inputMode="numeric" value={rtoDocket} onChange={e=>setRtoDocket(e.target.value.replace(/\D/g,"").slice(0,rtoServiceType === "premium" ? 11 : 14))} placeholder={rtoServiceType === "premium" ? "11-digit premium docket" : "14-digit normal docket"} className="input font-mono" style={{flex:1,minWidth:0}}/><button type="button" className="btn-ghost" onClick={()=>{setScanTarget("rto");setScanning(true);}} style={{whiteSpace:"nowrap"}}>Scan docket</button></div>
+                <div style={{fontSize:11,color:rtoDocket.length === (rtoServiceType === "premium" ? 11 : 14) ? "#3DDC97" : "#F5A623"}}>{rtoDocket.length}/{rtoServiceType === "premium" ? 11 : 14} digits entered</div>
               </>}
             </>)}
 
@@ -1254,13 +1260,13 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
       )}
 
       {scanning && (
-        <BarcodeScanModal onDetect={(val)=>{ setDrs(val); setScanning(false); }} onClose={()=>setScanning(false)} />
+        <BarcodeScanModal mode={scanTarget} expectedLength={scanTarget === "rto" ? (rtoServiceType === "premium" ? 11 : 14) : 19} onDetect={(val)=>{ if(scanTarget === "rto") setRtoDocket(val); else setDrs(val); setScanning(false); }} onClose={()=>setScanning(false)} />
       )}
     </div>
   );
 }
 
-function BarcodeScanModal({ onDetect, onClose }) {
+function BarcodeScanModal({ onDetect, onClose, mode="drs", expectedLength=19 }) {
   const videoRef = useRef(null);
   const [error, setError] = useState("");
   const [starting, setStarting] = useState(true);
@@ -1278,7 +1284,7 @@ function BarcodeScanModal({ onDetect, onClose }) {
         setStarting(false); return;
       }
       if (!("BarcodeDetector" in window)) {
-        setError("Barcode scanning is not supported by this browser. Type the 19-digit DRS number manually, or use an updated Chrome browser.");
+        setError("Barcode scanning is not supported by this browser. Type the required number manually, or use an updated Chrome browser.");
         setStarting(false); return;
       }
       try {
@@ -1300,8 +1306,8 @@ function BarcodeScanModal({ onDetect, onClose }) {
             const codes = await detector.detect(videoRef.current);
             if (codes.length > 0) {
               const value = String(codes[0].rawValue || "").trim();
-              if (/^\d{19}$/.test(value)) { onDetect(value); return; }
-              setError("This is not a DRS number. The scanned code must contain exactly 19 digits. Please scan again or enter it manually.");
+              if (new RegExp(`^\\d{${expectedLength}}$`).test(value)) { onDetect(value); return; }
+              setError(mode === "rto" ? `Invalid RTO docket: scan must contain exactly ${expectedLength} digits for the selected service.` : "This is not a DRS number. The scanned code must contain exactly 19 digits. Please scan again or enter it manually.");
               setStarting(false);
               // Keep camera alive so the rider can try scanning another label.
             }
@@ -1314,7 +1320,7 @@ function BarcodeScanModal({ onDetect, onClose }) {
         if (name === "NotAllowedError" || name === "PermissionDeniedError" || name === "SecurityError") {
           setError("Camera permission is blocked. In Chrome, tap the site icon beside the address → Permissions → Camera → Allow, then reload Rider Ops.");
         } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-          setError("No camera was found on this device. Type the 19-digit DRS number manually.");
+          setError("No camera was found on this device. Type the required number manually.");
         } else if (name === "NotReadableError" || name === "TrackStartError") {
           setError("The camera is busy in another app. Close Camera/WhatsApp video, then try again.");
         } else {
@@ -1909,13 +1915,15 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
   const dailyBreakdown = useMemo(() => {
     const byDate = {};
     monthRounds.forEach((rd) => {
-      byDate[rd.date] = byDate[rd.date] || { date: rd.date, delivered: 0, morningIn: null, eveningIn: null };
+      byDate[rd.date] = byDate[rd.date] || { date: rd.date, delivered: 0, pickups: 0, returned: 0, morningIn: null, morningOut: null, eveningIn: null, eveningOut: null };
       byDate[rd.date].delivered += rd.deliveredFinal || 0;
+      byDate[rd.date].pickups += rd.pickupCount || 0;
+      byDate[rd.date].returned += rd.returnedCount || 0;
     });
     myDuty.forEach((d) => {
-      byDate[d.date] = byDate[d.date] || { date: d.date, delivered: 0, pickups: 0, returned: 0, rounds: [], morningIn: null, eveningIn: null };
-      if (d.period === "morning") byDate[d.date].morningIn = d.startTime;
-      if (d.period === "evening") byDate[d.date].eveningIn = d.startTime;
+      byDate[d.date] = byDate[d.date] || { date: d.date, delivered: 0, pickups: 0, returned: 0, rounds: [], morningIn: null, morningOut: null, eveningIn: null, eveningOut: null };
+      if (d.period === "morning") { byDate[d.date].morningIn = d.startTime; byDate[d.date].morningOut = d.endTime; }
+      if (d.period === "evening") { byDate[d.date].eveningIn = d.startTime; byDate[d.date].eveningOut = d.endTime; }
     });
     return Object.values(byDate).sort((a,b)=>a.date<b.date?1:-1);
   }, [monthRounds, myDuty]);
@@ -1972,7 +1980,7 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
           </div>
 
           <div>
-            <div className="section-label">Daily Report — {thisMonth} (Delivered: {monthTotalDelivered} · Pickups: {monthTotalPickups})</div>
+            <div className="section-label">Daily Summary — {thisMonth}</div><div style={{fontSize:11,color:"#7C8592",marginBottom:8}}>Daily totals + attendance in/out for each date. Duty Times below shows each individual attendance record.</div>
             <div className="list-card">
               {dailyBreakdown.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No data for this month yet.</div> :
                 dailyBreakdown.map(d=>(
@@ -1992,12 +2000,14 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
                         <div style={{fontSize:9,color:"#7C8592"}}>RETURNED</div>
                       </div>
                       <div style={{textAlign:"center"}}>
-                        <div className="font-mono" style={{fontSize:11,color:"#F5A623"}}>{d.morningIn ? fmtTime(d.morningIn) : "—"}</div>
-                        <div style={{fontSize:9,color:"#F5A623",fontWeight:800,background:"rgba(245,166,35,.12)",padding:"3px 5px",borderRadius:4}}>MORNING IN</div>
+                        <div className="font-mono" style={{fontSize:11,color:"#3DDC97"}}>{d.morningIn ? fmtTime(d.morningIn) : "—"}</div>
+                        <div style={{fontSize:9,color:"#3DDC97",fontWeight:800,background:"rgba(61,220,151,.12)",padding:"3px 5px",borderRadius:4}}>MORNING IN</div>
+                        <div className="font-mono" style={{fontSize:10,color:"#E5484D",marginTop:4}}>{d.morningOut ? fmtTime(d.morningOut) : "—"}</div><div style={{fontSize:9,color:"#E5484D",fontWeight:800,background:"rgba(229,72,77,.12)",padding:"3px 5px",borderRadius:4}}>MORNING OUT</div>
                       </div>
                       <div style={{textAlign:"center"}}>
-                        <div className="font-mono" style={{fontSize:11,color:"#8AA5FF"}}>{d.eveningIn ? fmtTime(d.eveningIn) : "—"}</div>
-                        <div style={{fontSize:9,color:"#8AA5FF",fontWeight:800,background:"rgba(138,165,255,.12)",padding:"3px 5px",borderRadius:4}}>EVENING IN</div>
+                        <div className="font-mono" style={{fontSize:11,color:"#3DDC97"}}>{d.eveningIn ? fmtTime(d.eveningIn) : "—"}</div>
+                        <div style={{fontSize:9,color:"#3DDC97",fontWeight:800,background:"rgba(61,220,151,.12)",padding:"3px 5px",borderRadius:4}}>EVENING IN</div>
+                        <div className="font-mono" style={{fontSize:10,color:"#E5484D",marginTop:4}}>{d.eveningOut ? fmtTime(d.eveningOut) : "—"}</div><div style={{fontSize:9,color:"#E5484D",fontWeight:800,background:"rgba(229,72,77,.12)",padding:"3px 5px",borderRadius:4}}>EVENING OUT</div>
                       </div>
                     </div>
                   </div>
@@ -2013,7 +2023,7 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
                 myDuty.map(d=>(
                   <div key={d.id} className="list-row">
                     <div style={{fontSize:12}} className="font-mono">{fmtDate(d.date)}</div>
-                    <div style={{fontSize:12}} className="font-mono">{d.period||"—"}: In {fmtTime(d.startTime)} · <span style={{color:"#3DDC97"}}>Out {fmtTime(d.endTime)}</span></div>
+                    <div style={{fontSize:12}} className="font-mono">{d.period||"—"}: <span style={{color:"#3DDC97",background:"rgba(61,220,151,.12)",padding:"2px 4px",borderRadius:4}}>IN {fmtTime(d.startTime)}</span> · <span style={{color:"#E5484D",background:"rgba(229,72,77,.12)",padding:"2px 4px",borderRadius:4}}>OUT {fmtTime(d.endTime)}</span></div>
                   </div>
                 ))
               }
