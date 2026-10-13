@@ -233,6 +233,26 @@ export default function App() {
       .then(() => { try { sessionStorage.setItem(key, "1"); } catch {} })
       .catch((err) => console.error("Could not record app visit", err));
   }, [user?.id]);
+  // Client-side fallback: close any still-open morning/evening duty at 9:15 PM.
+  // For guaranteed operation when nobody has the app open, this same rule must also run in a scheduled trusted backend job.
+  useEffect(() => {
+    const closeExpiredDuty = async () => {
+      const now = new Date();
+      if (now.getHours() < 21 || (now.getHours() === 21 && now.getMinutes() < 15)) return;
+      const today = todayISO();
+      const cutoff = new Date(now); cutoff.setHours(21, 15, 0, 0);
+      for (const d of duty) {
+        if (d.date === today && (d.period === "morning" || d.period === "evening") && d.startTime && !d.endTime) {
+          try { await updateRec("duty", d.id, { endTime: cutoff.getTime(), autoClosed: true, autoClosedAtMs: Date.now() }); }
+          catch (err) { console.error("Could not auto-close duty", err); }
+        }
+      }
+    };
+    closeExpiredDuty();
+    const timer = setInterval(closeExpiredDuty, 60000);
+    return () => clearInterval(timer);
+  }, [duty]);
+
   const officeSetting = settings.find((s) => s.id === "office" || s.type === "office");
 
   // seed a founder account if riders collection is totally empty
@@ -978,6 +998,10 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const [weightKg, setWeightKg] = useState(""); // optional total parcel weight for this DRS
   const [closingRound, setClosingRound] = useState(null); // round object being closed
   const [returnedInput, setReturnedInput] = useState("");
+  const [undeliveredReason, setUndeliveredReason] = useState("");
+  const [rtoDocket, setRtoDocket] = useState("");
+  const [returnDisposition, setReturnDisposition] = useState("undelivered");
+  const [pickupWeightKg, setPickupWeightKg] = useState("");
   const [hadReturns, setHadReturns] = useState(null); // true/false
   const [hadPickup, setHadPickup] = useState(null);
   const [pickupInput, setPickupInput] = useState("");
@@ -985,11 +1009,20 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const [pickupQuantities, setPickupQuantities] = useState({});
   const [showOtherPickupClients, setShowOtherPickupClients] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [showPickupRound, setShowPickupRound] = useState(false);
 
   const targetId = isAdmin ? viewRiderId : user.id;
   const myRoundsToday = useMemo(()=> rounds.filter(r=>r.riderId===targetId && r.date===date).sort((a,b)=>a.roundNumber-b.roundNumber), [rounds, targetId, date]);
   const openRounds = myRoundsToday.filter(r=>!r.closed);
   const nextRoundNumber = myRoundsToday.reduce((max, r) => Math.max(max, Number(r.roundNumber) || 0), 0) + 1;
+
+  const startPickupRound = async () => {
+    const pickupDetails = selectedPickupClients.filter(client => client !== "Other").map(client => ({ client, count: Math.max(0, parseInt(pickupQuantities[client], 10) || 0) })).filter(item => item.count > 0);
+    if (!pickupDetails.length) { alert("Select at least one pickup client and enter its parcel count."); return; }
+    if (pickupWeightKg !== "" && (!Number.isFinite(Number(pickupWeightKg)) || Number(pickupWeightKg) <= 0)) { alert("Enter a valid pickup weight in kg, or leave it blank."); return; }
+    await addRec("rounds", { riderId: targetId, date, roundNumber: nextRoundNumber, roundType: "pickup", drsNumber: "", deliveryCount: 0, weightKg: pickupWeightKg === "" ? null : Number(pickupWeightKg), closed: true, approved: "pending", returnedCount: 0, deliveredFinal: 0, pickupCount: pickupDetails.reduce((sum, item) => sum + item.count, 0), pickupDetails, pickupOtherCount: 0, closedBy: user.name, closedById: user.id, closedAtMs: Date.now() });
+    setSelectedPickupClients([]); setPickupQuantities({}); setPickupWeightKg(""); setShowOtherPickupClients(false); setShowPickupRound(false);
+  };
 
   const startRound = async () => {
     if (!/^\d{19}$/.test(drs.trim())) { alert("This is not a DRS number. Enter exactly 19 digits."); return; }
@@ -1003,7 +1036,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
     setDrs(""); setDeliveryCount(""); setWeightKg("");
   };
 
-  const openCloseModal = (r) => { setClosingRound(r); setHadReturns(null); setHadPickup(null); setReturnedInput(""); setPickupInput(""); setSelectedPickupClients([]); setPickupQuantities({}); setShowOtherPickupClients(false); };
+  const openCloseModal = (r) => { setClosingRound(r); setHadReturns(null); setHadPickup(null); setReturnedInput(""); setUndeliveredReason(""); setRtoDocket(""); setReturnDisposition("undelivered"); setPickupInput(""); setSelectedPickupClients([]); setPickupQuantities({}); setShowOtherPickupClients(false); };
   const confirmClose = async () => {
     if (hadReturns === null || hadPickup === null) return;
     const returned = hadReturns ? (parseInt(returnedInput,10) || 0) : 0;
@@ -1019,6 +1052,9 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
       closed: true, approved: "pending", returnedCount: returned, pickupCount: pickup,
       pickupDetails, pickupOtherCount: otherCount,
       deliveredFinal: Math.max(0, closingRound.deliveryCount - returned),
+      undeliveredReason: returned > 0 ? undeliveredReason : "",
+      returnType: returned > 0 ? returnDisposition : "delivered",
+      rtoDocketNumber: returned > 0 && returnDisposition === "rto" ? rtoDocket.trim() : "",
       closedBy: user.name, closedById: user.id, closedAtMs: Date.now(),
     });
     setClosingRound(null);
@@ -1058,7 +1094,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
       )}
 
       <div className="card" style={{display:"flex",flexDirection:"column",gap:10,borderColor: openRounds.length ? "rgba(245,166,35,0.45)" : undefined}}>
-        <div className="section-label">Start Round {nextRoundNumber}</div>
+        <div className="section-label">Start Delivery Round {nextRoundNumber}</div>
         {openRounds.length > 0 && <p style={{fontSize:12,color:"#F5A623",margin:0}}>You can start another DRS for newly received parcels even while an earlier round is still open. Close each round separately when finished.</p>}
         <div style={{display:"flex",gap:8}}>
           <input value={drs} onChange={(e)=>setDrs(e.target.value)} placeholder="DRS Number (mandatory)" className="input" style={{flex:1}}/>
@@ -1069,7 +1105,13 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
         <input type="number" value={deliveryCount} onChange={(e)=>setDeliveryCount(e.target.value)} placeholder="How many parcels are you taking" className="input font-mono"/>
         <input type="number" min="0.1" step="0.1" value={weightKg} onChange={(e)=>setWeightKg(e.target.value)} placeholder="Total parcel weight in kg (optional)" className="input font-mono"/>
         <p style={{fontSize:11,color:"#7C8592",margin:"-4px 0 0"}}>Optional: add the approximate total weight of parcels in this DRS. Leave blank if unknown.</p>
-        <button onClick={startRound} disabled={!/^\d{19}$/.test(drs.trim()) || !deliveryCount || Number(deliveryCount) <= 0} className="btn-primary">Start Round {nextRoundNumber}</button>
+        <button onClick={startRound} disabled={!/^\d{19}$/.test(drs.trim()) || !deliveryCount || Number(deliveryCount) <= 0} className="btn-primary">Start Delivery Round {nextRoundNumber}</button>
+      </div>
+
+      <div className="card" style={{display:"flex",flexDirection:"column",gap:10,borderColor:"rgba(245,166,35,0.4)"}}>
+        <div className="section-label">Pickup Only</div>
+        <p style={{fontSize:12,color:"#7C8592",margin:0}}>Use this when you are only collecting pickups and have no delivery DRS. This creates a separate pickup entry for approval.</p>
+        <button onClick={()=>{setSelectedPickupClients([]);setPickupQuantities({});setShowOtherPickupClients(false);setShowPickupRound(true);}} className="btn-primary">Start Pickup Round</button>
       </div>
 
       <div>
@@ -1079,15 +1121,15 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
             myRoundsToday.map(r=>(
               <div key={r.id} className="list-row">
                 <div>
-                  <div style={{fontSize:13,fontWeight:600}}>Round {r.roundNumber} · DRS {r.drsNumber}</div>
+                  <div style={{fontSize:13,fontWeight:600}}>{r.roundType === "pickup" ? `Pickup Round ${r.roundNumber}` : `Delivery Round ${r.roundNumber} · DRS ${r.drsNumber}`}</div>
                   <div style={{fontSize:11,color:"#7C8592"}} className="font-mono">
-                    Out: {r.deliveryCount}{r.weightKg != null ? ` · Weight: ${r.weightKg} kg` : ""} {r.closed ? `· Delivered: ${r.deliveredFinal} · Returned: ${r.returnedCount} · Pickup: ${r.pickupCount}` : "· Pending closure"}
+                    Out: {r.roundType === "pickup" ? `Pickup parcels: ${r.pickupCount ?? 0}` : r.deliveryCount}{r.weightKg != null ? ` · Weight: ${r.weightKg} kg` : ""} {r.roundType === "pickup" ? "" : (r.closed ? `· Delivered: ${r.deliveredFinal} · Returned: ${r.returnedCount} · Pickup: ${r.pickupCount}` : "· Pending closure")}
                     {r.pickupDetails?.length > 0 && <div style={{fontSize:10,color:"#F5A623",marginTop:3}}>Clients: {r.pickupDetails.map((p)=>`${p.client} (${p.count})`).join(", ")}{r.pickupOtherCount ? `, Other (${r.pickupOtherCount})` : ""}</div>}
                     {r.approvedBy && <div style={{fontSize:10,color:"#8AA5FF",marginTop:3}}>{r.approved} by {r.approvedBy} · {r.approvedAtMs ? new Date(r.approvedAtMs).toLocaleString("en-IN") : "time unavailable"}</div>}
                   </div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  {!r.closed && <>
+                  {!r.closed && r.roundType !== "pickup" && <>
                     <span className="badge badge-pending">open</span>
                     <button onClick={()=>openCloseModal(r)} className="btn-primary" style={{padding:"5px 8px",fontSize:10}}>Close Round {r.roundNumber}</button>
                   </>}
@@ -1126,6 +1168,23 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
       </>
       )}
 
+      {showPickupRound && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:60}}>
+          <div className="card" style={{maxWidth:440,width:"100%",maxHeight:"88vh",overflowY:"auto",display:"flex",flexDirection:"column",gap:12}}>
+            <div className="section-label">Start Pickup Round</div>
+            <p style={{fontSize:12,color:"#7C8592",margin:0}}>Select pickup clients and enter parcel counts. This round is separate from delivery rounds.</p>
+            {(() => { const assigned = RIDER_PICKUP_CLIENTS[user.name] || []; const otherClients = PICKUP_CLIENTS.filter(client => client !== "Other" && !assigned.includes(client)); const visible = showOtherPickupClients ? [...assigned,...otherClients] : assigned; return <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {visible.map(client => { const selected = selectedPickupClients.includes(client); return <div key={client} style={{border:"1px solid #2A3038",borderRadius:8,padding:8}}><label style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}><input type="checkbox" checked={selected} onChange={e=>setSelectedPickupClients(prev=>e.target.checked?[...prev,client]:prev.filter(x=>x!==client))}/><span style={{fontWeight:assigned.includes(client)?700:400,color:assigned.includes(client)?"#F5A623":"#EDEAE1"}}>{client}</span></label>{selected && <input type="number" min="1" value={pickupQuantities[client]||""} onChange={e=>setPickupQuantities(prev=>({...prev,[client]:e.target.value}))} placeholder="Parcel count" className="input font-mono" style={{marginTop:6}}/>}</div>; })}
+              <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,border:"1px solid #2A3038",borderRadius:8,padding:10}}><input type="checkbox" checked={showOtherPickupClients} onChange={e=>setShowOtherPickupClients(e.target.checked)}/><span style={{fontWeight:700,color:"#F5A623"}}>Other — show all remaining pickup clients</span></label>
+            </div>; })()}
+            <div style={{fontSize:12,color:"#F5A623"}}>Pickup total: {selectedPickupClients.filter(c=>c!=="Other").reduce((sum,c)=>sum+Math.max(0,parseInt(pickupQuantities[c],10)||0),0)} parcels</div>
+            <input type="number" min="0.1" step="0.1" value={pickupWeightKg} onChange={e=>setPickupWeightKg(e.target.value)} placeholder="Total pickup weight in kg (optional)" className="input font-mono"/>
+            <button onClick={startPickupRound} className="btn-primary">Submit Pickup Round for Approval</button>
+            <button onClick={()=>setShowPickupRound(false)} style={{background:"none",border:"none",color:"#7C8592",fontSize:12,cursor:"pointer"}}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       {closingRound && (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,zIndex:50}}>
           <div className="card" style={{maxWidth:360,width:"100%",display:"flex",flexDirection:"column",gap:12}}>
@@ -1136,9 +1195,19 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
               <button onClick={()=>setHadReturns(false)} className="btn-ghost" style={{flex:1, borderColor: hadReturns===false?"#3DDC97":"#2A3038", color: hadReturns===false?"#3DDC97":"#7C8592"}}>All Delivered</button>
               <button onClick={()=>setHadReturns(true)} className="btn-ghost" style={{flex:1, borderColor: hadReturns===true?"#E5484D":"#2A3038", color: hadReturns===true?"#E5484D":"#7C8592"}}>Some Returned</button>
             </div>
-            {hadReturns && (
-              <input type="number" value={returnedInput} onChange={(e)=>setReturnedInput(e.target.value)} placeholder="How many were returned" className="input font-mono"/>
-            )}
+            {hadReturns && (<>
+              <input type="number" min="0" max={closingRound.deliveryCount} value={returnedInput} onChange={(e)=>setReturnedInput(e.target.value)} placeholder="How many were undelivered / returned" className="input font-mono"/>
+              <label style={{fontSize:12,color:"#EDEAE1"}}>Why were these parcels undelivered?</label>
+              <select value={undeliveredReason} onChange={e=>setUndeliveredReason(e.target.value)} className="input">
+                <option value="">Select reason</option><option value="CX rejected">CX rejected</option><option value="Customer unavailable">Customer unavailable</option><option value="Phone number unavailable">Phone number unavailable</option><option value="Short / incorrect address">Short / incorrect address</option><option value="Other">Other</option>
+              </select>
+              <label style={{fontSize:12,color:"#EDEAE1"}}>Parcel status</label>
+              <select value={returnDisposition} onChange={e=>setReturnDisposition(e.target.value)} className="input"><option value="undelivered">Undelivered / attempt failed</option><option value="rto">RTO</option></select>
+              {returnDisposition === "rto" && <>
+                <label style={{fontSize:12,color:"#EDEAE1"}}>RTO docket number (required)</label>
+                <input value={rtoDocket} onChange={e=>setRtoDocket(e.target.value)} placeholder="Enter RTO docket number" className="input font-mono"/>
+              </>}
+            </>)}
 
             <p style={{fontSize:13,marginTop:6}}>Did you bring any pickups this round?</p>
             <div style={{display:"flex",gap:8}}>
@@ -1178,7 +1247,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
               );
             })()}
 
-            <button onClick={confirmClose} disabled={hadReturns===null || hadPickup===null} className="btn-primary">Confirm & Close</button>
+            <button onClick={confirmClose} disabled={hadReturns===null || hadPickup===null || (hadReturns && Number(returnedInput)>0 && (!undeliveredReason || (returnDisposition === "rto" && !rtoDocket.trim())))} className="btn-primary">Confirm & Close</button>
             <button onClick={()=>setClosingRound(null)} style={{background:"none",border:"none",color:"#7C8592",fontSize:12,cursor:"pointer"}}>Cancel</button>
           </div>
         </div>
@@ -1924,11 +1993,11 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
                       </div>
                       <div style={{textAlign:"center"}}>
                         <div className="font-mono" style={{fontSize:11,color:"#F5A623"}}>{d.morningIn ? fmtTime(d.morningIn) : "—"}</div>
-                        <div style={{fontSize:9,color:"#7C8592"}}>MORNING IN</div>
+                        <div style={{fontSize:9,color:"#F5A623",fontWeight:800,background:"rgba(245,166,35,.12)",padding:"3px 5px",borderRadius:4}}>MORNING IN</div>
                       </div>
                       <div style={{textAlign:"center"}}>
                         <div className="font-mono" style={{fontSize:11,color:"#8AA5FF"}}>{d.eveningIn ? fmtTime(d.eveningIn) : "—"}</div>
-                        <div style={{fontSize:9,color:"#7C8592"}}>EVENING IN</div>
+                        <div style={{fontSize:9,color:"#8AA5FF",fontWeight:800,background:"rgba(138,165,255,.12)",padding:"3px 5px",borderRadius:4}}>EVENING IN</div>
                       </div>
                     </div>
                   </div>
@@ -1944,7 +2013,7 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
                 myDuty.map(d=>(
                   <div key={d.id} className="list-row">
                     <div style={{fontSize:12}} className="font-mono">{fmtDate(d.date)}</div>
-                    <div style={{fontSize:12}} className="font-mono">{d.period||"—"}: In {fmtTime(d.startTime)} · Out {fmtTime(d.endTime)}</div>
+                    <div style={{fontSize:12}} className="font-mono">{d.period||"—"}: In {fmtTime(d.startTime)} · <span style={{color:"#3DDC97"}}>Out {fmtTime(d.endTime)}</span></div>
                   </div>
                 ))
               }
