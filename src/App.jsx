@@ -186,17 +186,17 @@ const setRec = (col, id, data) => setDoc(doc(db, col, id), data);
 const TABS = [
   { id: "home", label: "Home", icon: Clock },
   { id: "leave", label: "Leave", icon: CalendarOff },
+  { id: "attendance", label: "Attendance", icon: ClipboardCheck },
   { id: "rounds", label: "Rounds", icon: Package },
+  { id: "leaderboard", label: "Leaderboard", icon: Trophy },
   { id: "mileage", label: "Mileage", icon: Gauge },
   { id: "myfuel", label: "My Fuel", icon: Fuel },
-  { id: "attendance", label: "Attendance", icon: ClipboardCheck },
-  { id: "leaderboard", label: "Leaderboard", icon: Trophy },
   { id: "calendar", label: "Calendar", icon: CalendarDays },
   { id: "panchang", label: "Panchang", icon: MoonIcon },
   { id: "announcements", label: "News", icon: Megaphone },
-  { id: "adminfuel", label: "Company Fuel", icon: Fuel, adminOnly: true },
   { id: "riders", label: "Riders", icon: Users, adminOnly: true },
   { id: "reports", label: "Reports", icon: FileText, adminOnly: true },
+  { id: "dutytimes", label: "Duty Times", icon: Clock, adminOnly: true },
   { id: "roundhistory", label: "Round History", icon: Package, adminOnly: true },
   { id: "visits", label: "Recent Visits", icon: Clock, founderOnly: true },
 ];
@@ -361,15 +361,15 @@ export default function App() {
         {tab==="rounds" && <RoundsTab user={user} isAdmin={isAdmin} isFounder={isFounder} riders={riders} rounds={rounds} riderName={riderName}/>}
         {tab==="mileage" && <MileageTab user={user} isAdmin={isAdmin} riders={riders} odometer={odometer} riderName={riderName}/>}
         {tab==="myfuel" && <MyFuelTab user={user} personalFuel={personalFuel}/>}
-        {tab==="attendance" && <AttendanceTab user={user} isAdmin={isAdmin} riders={riders} attendance={attendance} leaves={leaves}/>}
+        {tab==="attendance" && <AttendanceTab user={user} isAdmin={isAdmin} riders={riders} attendance={attendance} leaves={leaves} duty={duty}/>}
         {tab==="leaderboard" && <LeaderboardTab rounds={rounds} riders={riders} user={user} riderName={riderName} duty={duty} leaves={leaves}/>}
         {tab==="calendar" && <CalendarTab holidays={holidays} leaves={leaves} riders={riders} user={user} isAdmin={isAdmin} riderName={riderName}/>}
         {tab==="panchang" && <PanchangTab/>}
         {tab==="announcements" && <AnnouncementsTab user={user} isAdmin={isAdmin} announcements={announcements}/>}
-        {tab==="adminfuel" && isAdmin && <AdminFuelTab riders={riders} adminFuel={adminFuel} riderName={riderName}/>}
         {tab==="riders" && isAdmin && <RidersTab user={user} riders={riders} isFounder={isFounder} officeSetting={officeSetting} adminRequests={adminRequests}/>}
         {tab==="reports" && isAdmin && <ReportsTab riders={riders} leaves={leaves} rounds={rounds} odometer={odometer}
           adminFuel={adminFuel} personalFuel={personalFuel} attendance={attendance} riderName={riderName} duty={duty}/>}
+        {tab==="dutytimes" && isAdmin && <DutyTimesTab riders={riders} duty={duty}/> }
         {tab==="roundhistory" && isAdmin && <RoundHistoryTab riders={riders} rounds={rounds}/>}
         {tab==="visits" && isFounder && <RecentVisitsTab visits={visits}/> }
       </main>
@@ -617,7 +617,13 @@ function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, atten
       }
       setCheckingLoc(false);
     }
-    addRec("duty", { riderId: user.id, date: today, period, startTime: Date.now(), endTime: null });
+    const startedAt = Date.now();
+    await addRec("duty", { riderId: user.id, date: today, period, startTime: startedAt, endTime: null });
+    const existingAttendance = attendance.find(a => a.riderId === user.id && a.date === today);
+    try {
+      if (existingAttendance) await updateRec("attendance", existingAttendance.id, { status: "present", markedBy: "duty-in", updatedAtMs: startedAt });
+      else await addRec("attendance", { riderId: user.id, date: today, status: "present", markedBy: "duty-in", createdAtMs: startedAt });
+    } catch (err) { console.error("Duty IN saved but attendance update failed", err); }
   };
   const endDuty = (dutyDoc) => updateRec("duty", dutyDoc.id, { endTime: Date.now() });
 
@@ -1939,13 +1945,13 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
   const dailyBreakdown = useMemo(() => {
     const byDate = {};
     monthRounds.forEach((rd) => {
-      byDate[rd.date] = byDate[rd.date] || { date: rd.date, delivered: 0, pickups: 0, returned: 0, morningIn: null, morningOut: null, eveningIn: null, eveningOut: null };
-      byDate[rd.date].delivered += rd.deliveredFinal || 0;
-      byDate[rd.date].pickups += rd.pickupCount || 0;
-      byDate[rd.date].returned += rd.returnedCount || 0;
+      byDate[rd.date] = byDate[rd.date] || { date: rd.date, delivered: 0, pickups: 0, undelivered: 0, morningIn: null, morningOut: null, eveningIn: null, eveningOut: null };
+      byDate[rd.date].delivered += Number(rd.deliveredFinal) || 0;
+      byDate[rd.date].pickups += Number(rd.pickupCount) || 0;
+      if (rd.returnType !== "rto") byDate[rd.date].undelivered += Number(rd.returnedCount) || 0;
     });
     myDuty.forEach((d) => {
-      byDate[d.date] = byDate[d.date] || { date: d.date, delivered: 0, pickups: 0, returned: 0, rounds: [], morningIn: null, morningOut: null, eveningIn: null, eveningOut: null };
+      byDate[d.date] = byDate[d.date] || { date: d.date, delivered: 0, pickups: 0, undelivered: 0, rounds: [], morningIn: null, morningOut: null, eveningIn: null, eveningOut: null };
       if (d.period === "morning") { byDate[d.date].morningIn = d.startTime; byDate[d.date].morningOut = d.endTime; }
       if (d.period === "evening") { byDate[d.date].eveningIn = d.startTime; byDate[d.date].eveningOut = d.endTime; }
     });
@@ -2004,7 +2010,7 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
           </div>
 
           <div>
-            <div className="section-label">Daily Summary — {thisMonth}</div><div style={{fontSize:11,color:"#7C8592",marginBottom:8}}>Tap a delivery, pickup or return total in Round History for full date-wise details.</div>
+            <div className="section-label">Daily Summary — {thisMonth}</div><div style={{fontSize:11,color:"#7C8592",marginBottom:8}}>Tap a delivery, pickup or undelivered total in Round History for full date-wise details.</div>
             <div className="list-card">
               {dailyBreakdown.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No data for this month yet.</div> :
                 dailyBreakdown.map(d=>(
@@ -2020,18 +2026,20 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
                         <div style={{fontSize:9,color:"#7C8592"}}>PICKUPS</div>
                       </div>
                       <div style={{textAlign:"center"}}>
-                        <div className="font-mono" style={{fontSize:13,color:"#E5484D"}}>{d.returned}</div>
-                        <div style={{fontSize:9,color:"#7C8592"}}>RETURNED</div>
+                        <div className="font-mono" style={{fontSize:13,color:"#F5A623"}}>{d.undelivered}</div>
+                        <div style={{fontSize:9,color:"#7C8592"}}>UNDELIVERED</div>
                       </div>
                       <div style={{textAlign:"center"}}>
                         <div className="font-mono" style={{fontSize:11,color:"#3DDC97"}}>{d.morningIn ? fmtTime(d.morningIn) : "—"}</div>
                         <div style={{fontSize:9,color:"#3DDC97",fontWeight:800,background:"rgba(61,220,151,.12)",padding:"3px 5px",borderRadius:4}}>MORNING IN</div>
-                        <div className="font-mono" style={{fontSize:10,color:"#E5484D",marginTop:4}}>{d.morningOut ? fmtTime(d.morningOut) : "—"}</div><div style={{fontSize:9,color:"#E5484D",fontWeight:800,background:"rgba(229,72,77,.12)",padding:"3px 5px",borderRadius:4}}>OUT</div>
                       </div>
                       <div style={{textAlign:"center"}}>
                         <div className="font-mono" style={{fontSize:11,color:"#3DDC97"}}>{d.eveningIn ? fmtTime(d.eveningIn) : "—"}</div>
                         <div style={{fontSize:9,color:"#3DDC97",fontWeight:800,background:"rgba(61,220,151,.12)",padding:"3px 5px",borderRadius:4}}>EVENING IN</div>
-                        <div className="font-mono" style={{fontSize:10,color:"#E5484D",marginTop:4}}>{d.eveningOut ? fmtTime(d.eveningOut) : "—"}</div><div style={{fontSize:9,color:"#E5484D",fontWeight:800,background:"rgba(229,72,77,.12)",padding:"3px 5px",borderRadius:4}}>OUT</div>
+                      </div>
+                      <div style={{textAlign:"center"}}>
+                        <div className="font-mono" style={{fontSize:10,color:"#E5484D",marginTop:4}}>{fmtTime([d.morningOut,d.eveningOut].filter(Boolean).map(Number).sort((a,b)=>b-a)[0])}</div>
+                        <div style={{fontSize:9,color:"#E5484D",fontWeight:800,background:"rgba(229,72,77,.12)",padding:"3px 5px",borderRadius:4}}>OUT TIME</div>
                       </div>
                     </div>
                   </div>
@@ -2061,7 +2069,6 @@ function RoundHistoryTab({ riders, rounds }) {
   const approvedRows = rows.filter(r=>r.closed && r.approved==="approved");
   const delivered = approvedRows.reduce((n,r)=>n+(Number(r.deliveredFinal)||0),0);
   const pickup = approvedRows.reduce((n,r)=>n+(Number(r.pickupCount)||0),0);
-  const returned = approvedRows.reduce((n,r)=>n+(Number(r.returnedCount)||0),0);
   const rto = approvedRows.filter(r=>r.returnType==="rto").reduce((n,r)=>n+(Number(r.returnedCount)||0),0);
   const undelivered = approvedRows.filter(r=>(Number(r.returnedCount)||0)>0 && r.returnType!=="rto").reduce((n,r)=>n+(Number(r.returnedCount)||0),0);
   const tripKey = r => r.tripGroupId || `${r.riderId}-${r.date}-legacy-${r.roundNumber || r.id}`;
@@ -2077,13 +2084,13 @@ function RoundHistoryTab({ riders, rounds }) {
   });
   const dailyRows=Object.values(daily).sort((a,b)=>a.date<b.date?1:-1);
   const clickableStat = (label,value,color,key) => <button onClick={()=>setDetail(detail===key?"":key)} className="card" style={{textAlign:"left",cursor:"pointer",borderColor:detail===key?color:"#2A3038",color:"inherit",minWidth:0}}><div className="font-mono" style={{fontSize:28,color}}>{value}</div><div style={{fontSize:11,color:"#7C8592",textTransform:"uppercase"}}>{label}</div><div style={{fontSize:10,color,marginTop:5}}>Tap to view date-wise details ↗</div></button>;
-  const detailLabel = {delivered:"Delivered parcels",pickup:"Pickup parcels by date and client",pickupRounds:"Pickup rounds by date",returned:"Returned parcels",rto:"RTO parcels",undelivered:"Undelivered parcels"};
+  const detailLabel = {delivered:"Delivered parcels",pickup:"Pickup parcels by date and client",pickupRounds:"Pickup rounds by date",rto:"RTO parcels",undelivered:"Undelivered parcels"};
   return <div style={{display:"flex",flexDirection:"column",gap:12}}>
     <div className="section-label">Rider performance · Simple daily view</div>
     <select className="input" value={riderId} onChange={e=>setRiderId(e.target.value)}><option value="">All riders</option>{riders.filter(r=>r.role==="rider").map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select>
     <input className="input" type="month" value={month} onChange={e=>setMonth(e.target.value)}/>
     <div style={{display:"flex",gap:8}}><select className="input" value={type} onChange={e=>setType(e.target.value)}><option value="all">All activity</option><option value="delivery">Delivery only</option><option value="pickup">Pickup only</option></select><select className="input" value={status} onChange={e=>setStatus(e.target.value)}><option value="all">All approval statuses</option><option value="pending">Pending approval</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div>
-    <div className="stat-grid">{clickableStat("Delivery trips",deliveryTrips,"#8AA5FF","trips")}{clickableStat("Pickup rounds",new Set(approvedRows.filter(r=>r.roundType==="pickup").map(r=>`${r.riderId}-${r.date}-${r.roundNumber||r.id}`)).size,"#F5A623","pickupRounds")}{clickableStat("Delivered",delivered,"#3DDC97","delivered")}{clickableStat("Pickup parcels",pickup,"#F5A623","pickup")}{clickableStat("Returned",returned,"#E5484D","returned")}{clickableStat("RTO",rto,"#E5484D","rto")}{clickableStat("Undelivered",undelivered,"#F5A623","undelivered")}</div>
+    <div className="stat-grid">{clickableStat("Delivery trips",deliveryTrips,"#8AA5FF","trips")}{clickableStat("Pickup rounds",new Set(approvedRows.filter(r=>r.roundType==="pickup").map(r=>`${r.riderId}-${r.date}-${r.roundNumber||r.id}`)).size,"#F5A623","pickupRounds")}{clickableStat("Delivered",delivered,"#3DDC97","delivered")}{clickableStat("Pickup parcels",pickup,"#F5A623","pickup")}{clickableStat("RTO",rto,"#E5484D","rto")}{clickableStat("Undelivered",undelivered,"#F5A623","undelivered")}</div>
     {detail && <div className="card" style={{borderColor:"#F5A623"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div className="section-label" style={{margin:0}}>{detail==="trips"?"Delivery trips by date":detailLabel[detail]||detail}</div><button className="btn-ghost" onClick={()=>setDetail("")}>Close</button></div>
       {detail==="trips" ? dailyRows.map(d=><div key={d.date} className="list-row"><span>{fmtDate(d.date)}</span><b>{new Set(d.rounds.filter(r=>r.roundType!=="pickup").map(tripKey)).size} trips · {d.drs.length} DRS</b></div>) : detail==="pickupRounds" ? dailyRows.map(d=><div key={d.date} className="list-row"><span>{fmtDate(d.date)}</span><b>{d.rounds.filter(r=>r.roundType==="pickup").length} pickup rounds · {d.pickup} parcels</b></div>) : detail==="pickup" ? dailyRows.filter(d=>d.pickup>0).map(d=><div key={d.date} style={{padding:"10px 0",borderBottom:"1px solid #2A3038"}}><b>{fmtDate(d.date)} · {d.pickup} parcels</b>{Object.entries(d.clients).length ? Object.entries(d.clients).map(([client,count])=><div key={client} style={{fontSize:12,color:"#F5A623",marginTop:4}}>{client}: {count} parcels</div>):<div style={{fontSize:12,color:"#7C8592"}}>Client detail not saved for this record.</div>}</div>) : dailyRows.filter(d=>d[detail]>0).map(d=><div key={d.date} className="list-row"><span>{fmtDate(d.date)}</span><b>{d[detail]} parcels</b></div>)}
       {detail!=="trips" && !(detail==="pickupRounds"?dailyRows.some(d=>d.rounds.some(r=>r.roundType==="pickup")):detail==="pickup"?dailyRows.some(d=>d.pickup>0):dailyRows.some(d=>d[detail]>0)) && <div style={{fontSize:12,color:"#7C8592",paddingTop:10}}>No approved records for this metric in the selected month.</div>}
@@ -2099,12 +2106,46 @@ function RoundHistoryTab({ riders, rounds }) {
   </div>;
 }
 
+// ---------------- Duty Times (admin date-wise attendance times for all riders) ----------------
+function DutyTimesTab({ riders, duty }) {
+  const [date, setDate] = useState(todayISO());
+  const riderRows = riders.filter(r => r.role === "rider").map(r => {
+    const records = duty.filter(d => d.riderId === r.id && d.date === date);
+    const morning = records.filter(d => d.period === "morning").sort((a,b)=>(Number(a.startTime)||0)-(Number(b.startTime)||0))[0];
+    const evening = records.filter(d => d.period === "evening").sort((a,b)=>(Number(a.startTime)||0)-(Number(b.startTime)||0))[0];
+    const fmt = ts => ts ? new Date(Number(ts)).toLocaleTimeString("en-IN", {hour:"2-digit", minute:"2-digit"}) : "—";
+    return { id:r.id, name:r.name, morningIn:fmt(morning?.startTime), morningOut:fmt(morning?.endTime), eveningIn:fmt(evening?.startTime), eveningOut:fmt(evening?.endTime) };
+  }).sort((a,b)=>a.name.localeCompare(b.name));
+  return <div style={{display:"flex",flexDirection:"column",gap:12}}>
+    <div className="section-label">Duty Times · All riders</div>
+    <div className="card"><label style={{display:"block",fontSize:11,color:"#7C8592",marginBottom:6}}>Select date</label><input type="date" className="input font-mono" value={date} onChange={e=>setDate(e.target.value)}/></div>
+    <div className="card" style={{fontSize:12,color:"#7C8592"}}>{fmtDate(date)} · {riderRows.filter(r=>r.morningIn!=="—" || r.eveningIn!=="—").length} riders have an IN record</div>
+    <div className="list-card">{riderRows.length===0 ? <div style={{padding:16,color:"#7C8592"}}>No riders found.</div> : riderRows.map(r=><div key={r.id} style={{padding:"12px 14px",borderBottom:"1px solid #22272E"}}>
+      <div style={{fontWeight:700,fontSize:13,marginBottom:8}}>{r.name}</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
+        <div style={{background:"#171B20",padding:9,borderRadius:8}}><div style={{fontSize:9,color:"#3DDC97",fontWeight:800}}>MORNING IN</div><div className="font-mono" style={{fontSize:15,marginTop:3}}>{r.morningIn}</div></div>
+        <div style={{background:"#171B20",padding:9,borderRadius:8}}><div style={{fontSize:9,color:"#3DDC97",fontWeight:800}}>EVENING IN</div><div className="font-mono" style={{fontSize:15,marginTop:3}}>{r.eveningIn}</div></div>
+        <div style={{background:"#171B20",padding:9,borderRadius:8}}><div style={{fontSize:9,color:"#E5484D",fontWeight:800}}>MORNING OUT</div><div className="font-mono" style={{fontSize:13,marginTop:3}}>{r.morningOut}</div></div>
+        <div style={{background:"#171B20",padding:9,borderRadius:8}}><div style={{fontSize:9,color:"#E5484D",fontWeight:800}}>EVENING OUT</div><div className="font-mono" style={{fontSize:13,marginTop:3}}>{r.eveningOut}</div></div>
+      </div>
+    </div>)}</div>
+    <div style={{fontSize:10,color:"#7C8592"}}>— means no saved duty record for that rider and period on the selected date.</div>
+  </div>;
+}
+
 // ---------------- Attendance (mark + view, daily + monthly) ----------------
-function AttendanceTab({ user, isAdmin, riders, attendance, leaves }) {
+function AttendanceTab({ user, isAdmin, riders, attendance, leaves, duty = [] }) {
   const [date, setDate] = useState(todayISO());
   const visibleRiders = isAdmin ? riders.filter(r=>r.role==="rider") : riders.filter(r=>r.id===user.id);
 
-  const statusFor = (riderId, d) => attendance.find(a=>a.riderId===riderId && a.date===d);
+  const statusFor = (riderId, d) => {
+    const saved = attendance.find(a=>a.riderId===riderId && a.date===d);
+    if (saved) return saved;
+    // Backfill display status for historic dates when duty IN was recorded before
+    // attendance was automatically linked to the duty action.
+    const hasDutyIn = duty.some(x=>x.riderId===riderId && x.date===d && (x.period==="morning" || x.period==="evening") && x.startTime);
+    return hasDutyIn ? { status:"present", derivedFromDuty:true } : undefined;
+  };
   const onLeave = (riderId, d) => leaves.some(l=>l.riderId===riderId && l.date===d && l.status==="approved");
   const setStatus = async (riderId, status) => {
     const existing = statusFor(riderId, date);
@@ -2118,7 +2159,18 @@ function AttendanceTab({ user, isAdmin, riders, attendance, leaves }) {
   ];
 
   const thisMonth = monthKey(todayISO());
-  const monthlyCount = (riderId, status) => attendance.filter(a=>a.riderId===riderId && monthKey(a.date)===thisMonth && a.status===status).length;
+  const monthlyCount = (riderId, status) => {
+    if (status === "present") {
+      const explicit = attendance.filter(a=>a.riderId===riderId && monthKey(a.date)===thisMonth && a.status==="present");
+      const dates = new Set(explicit.map(a=>a.date));
+      duty.filter(d=>d.riderId===riderId && monthKey(d.date)===thisMonth && (d.period==="morning" || d.period==="evening") && d.startTime).forEach(d=>{
+        const saved = attendance.find(a=>a.riderId===riderId && a.date===d.date);
+        if (!saved || saved.status === "present") dates.add(d.date);
+      });
+      return dates.size;
+    }
+    return attendance.filter(a=>a.riderId===riderId && monthKey(a.date)===thisMonth && a.status===status).length;
+  };
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
