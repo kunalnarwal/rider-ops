@@ -197,6 +197,7 @@ const TABS = [
   { id: "adminfuel", label: "Company Fuel", icon: Fuel, adminOnly: true },
   { id: "riders", label: "Riders", icon: Users, adminOnly: true },
   { id: "reports", label: "Reports", icon: FileText, adminOnly: true },
+  { id: "roundhistory", label: "Round History", icon: Package, adminOnly: true },
   { id: "visits", label: "Recent Visits", icon: Clock, founderOnly: true },
 ];
 
@@ -369,6 +370,7 @@ export default function App() {
         {tab==="riders" && isAdmin && <RidersTab user={user} riders={riders} isFounder={isFounder} officeSetting={officeSetting} adminRequests={adminRequests}/>}
         {tab==="reports" && isAdmin && <ReportsTab riders={riders} leaves={leaves} rounds={rounds} odometer={odometer}
           adminFuel={adminFuel} personalFuel={personalFuel} attendance={attendance} riderName={riderName} duty={duty}/>}
+        {tab==="roundhistory" && isAdmin && <RoundHistoryTab riders={riders} rounds={rounds}/>}
         {tab==="visits" && isFounder && <RecentVisitsTab visits={visits}/> }
       </main>
 
@@ -1017,6 +1019,10 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const myRoundsToday = useMemo(()=> rounds.filter(r=>r.riderId===targetId && r.date===date).sort((a,b)=>a.roundNumber-b.roundNumber), [rounds, targetId, date]);
   const openRounds = myRoundsToday.filter(r=>!r.closed);
   const nextRoundNumber = myRoundsToday.reduce((max, r) => Math.max(max, Number(r.roundNumber) || 0), 0) + 1;
+  // A DRS is unique: do not allow the same DRS in any existing round, regardless of rider/date/status.
+  const normalizedDrs = drs.trim();
+  const duplicateDrsRound = normalizedDrs ? rounds.find(r => r.roundType !== "pickup" && String(r.drsNumber || "").trim() === normalizedDrs) : null;
+  const isDuplicateDrs = Boolean(duplicateDrsRound);
 
   const startPickupRound = async () => {
     const pickupDetails = selectedPickupClients.filter(client => client !== "Other").map(client => ({ client, count: Math.max(0, parseInt(pickupQuantities[client], 10) || 0) })).filter(item => item.count > 0);
@@ -1028,6 +1034,8 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
 
   const startRound = async () => {
     if (!/^\d{19}$/.test(drs.trim())) { alert("This is not a DRS number. Enter exactly 19 digits."); return; }
+    const duplicate = rounds.find(r => r.roundType !== "pickup" && String(r.drsNumber || "").trim() === drs.trim());
+    if (duplicate) { alert(`DRS ${drs.trim()} is already added${duplicate.riderId ? " in another round" : ""}. Please scan or enter a different DRS number.`); return; }
     if (!deliveryCount || Number(deliveryCount) <= 0) return;
     if (weightKg !== "" && (!Number.isFinite(Number(weightKg)) || Number(weightKg) <= 0)) { alert("Enter a valid weight in kg, or leave it blank."); return; }
     const nextNum = nextRoundNumber;
@@ -1101,15 +1109,16 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
         <div className="section-label">Start Delivery Round {nextRoundNumber}</div>
         {openRounds.length > 0 && <p style={{fontSize:12,color:"#F5A623",margin:0}}>You can start another DRS for newly received parcels even while an earlier round is still open. Close each round separately when finished.</p>}
         <div style={{display:"flex",gap:8}}>
-          <input value={drs} onChange={(e)=>setDrs(e.target.value)} placeholder="DRS Number (mandatory)" className="input" style={{flex:1}}/>
+          <input value={drs} onChange={(e)=>setDrs(e.target.value)} placeholder="DRS Number (mandatory)" className="input" style={{flex:1,borderColor:isDuplicateDrs?"#E5484D":undefined}}/>
           <button onClick={()=>setScanning(true)} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
             <ScanLine size={14}/> Scan
           </button>
         </div>
+        {isDuplicateDrs && <div role="alert" style={{fontSize:12,color:"#E5484D",background:"rgba(229,72,77,0.10)",border:"1px solid rgba(229,72,77,0.45)",borderRadius:8,padding:10}}>DRS already added. This number exists in {duplicateDrsRound.roundType === "pickup" ? "a pickup round" : `Delivery Round ${duplicateDrsRound.roundNumber || ""}`} on {duplicateDrsRound.date || "an earlier date"}. You cannot add it again.</div>}
         <input type="number" value={deliveryCount} onChange={(e)=>setDeliveryCount(e.target.value)} placeholder="How many parcels are you taking" className="input font-mono"/>
         <input type="number" min="0.1" step="0.1" value={weightKg} onChange={(e)=>setWeightKg(e.target.value)} placeholder="Total parcel weight in kg (optional)" className="input font-mono"/>
         <p style={{fontSize:11,color:"#7C8592",margin:"-4px 0 0"}}>Optional: add the approximate total weight of parcels in this DRS. Leave blank if unknown.</p>
-        <button onClick={startRound} disabled={!/^\d{19}$/.test(drs.trim()) || !deliveryCount || Number(deliveryCount) <= 0} className="btn-primary">Start Delivery Round {nextRoundNumber}</button>
+        <button onClick={startRound} disabled={!/^\d{19}$/.test(drs.trim()) || isDuplicateDrs || !deliveryCount || Number(deliveryCount) <= 0} className="btn-primary">{isDuplicateDrs ? "DRS Already Added" : `Start Delivery Round ${nextRoundNumber}`}</button>
       </div>
 
       <div className="card" style={{display:"flex",flexDirection:"column",gap:10,borderColor:"rgba(245,166,35,0.4)"}}>
@@ -1719,11 +1728,14 @@ function PanchangTab() {
           </div>
         </div>
       </div>
-      <div className="card" style={{fontSize:12,color:"#B9C0CA",lineHeight:1.6}}>
-        Exact daily tithi, nakshatra and muhurat need precise lunar-position data from a
-        dedicated panchang source, so this app doesn't calculate them. Major Hindu festival
-        dates (Diwali, Holi, Navratri, Hindu Nav Varsh, etc.) are listed on the Calendar tab
-        instead — check a local panchang or app for exact daily tithi.
+      <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
+        <div className="section-label">Aaj ka Panchang · {new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
+        {todayISO()==="2026-10-14" ? <>
+          <div style={{fontSize:20,fontWeight:800,color:"#F5A623"}}>आश्विन शुक्ल चतुर्थी</div>
+          <div style={{fontSize:13,color:"#B9C0CA"}}>तिथि: शुक्ल चतुर्थी · नक्षत्र: अनुराधा · योग: आयुष्मान</div>
+          <div style={{fontSize:12,color:"#7C8592",lineHeight:1.5}}>चतुर्थी तिथि 15 अक्टूबर को लगभग 1:13 AM तक; नक्षत्र और मुहूर्त स्थान के अनुसार बदल सकते हैं।</div>
+        </> : <div style={{fontSize:12,color:"#B9C0CA",lineHeight:1.6}}>आज की सटीक तिथि, नक्षत्र, योग, करण, राहुकाल और मुहूर्त के लिए स्थान-आधारित लाइव पंचांग डेटा चाहिए। गलत तिथि दिखाने से बचने के लिए यहाँ अनुमान नहीं दिखाया जा रहा है।</div>}
+        <a href="https://www.drikpanchang.com/panchang/day-panchang.html?geoname-id=2170078" target="_blank" rel="noreferrer" style={{color:"#F5A623",fontSize:12,fontWeight:700}}>पूरा दैनिक पंचांग देखें ↗</a>
       </div>
     </div>
   );
@@ -2016,39 +2028,38 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
             </div>
           </div>
 
-          <div>
-            <div className="section-label">Duty Times (this month)</div>
-            <div className="list-card">
-              {myDuty.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No duty records.</div> :
-                myDuty.map(d=>(
-                  <div key={d.id} className="list-row">
-                    <div style={{fontSize:12}} className="font-mono">{fmtDate(d.date)}</div>
-                    <div style={{fontSize:12}} className="font-mono">{d.period||"—"}: <span style={{color:"#3DDC97",background:"rgba(61,220,151,.12)",padding:"2px 4px",borderRadius:4}}>IN {fmtTime(d.startTime)}</span> · <span style={{color:"#E5484D",background:"rgba(229,72,77,.12)",padding:"2px 4px",borderRadius:4}}>OUT {fmtTime(d.endTime)}</span></div>
-                  </div>
-                ))
-              }
-            </div>
-          </div>
+          <div className="card" style={{fontSize:11,color:"#7C8592"}}>Attendance IN/OUT timings are already shown in the Daily Summary above. Use the separate Round History tab for detailed round-wise delivery, pickup and return records.</div>
 
-          <div>
-            <div className="section-label">DRS / Round History (this month)</div>
-            <div className="list-card">
-              {monthRounds.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No round records.</div> :
-                monthRounds.sort((a,b)=>a.date<b.date?1:-1).map(round=>(
-                  <div key={round.id} className="list-row">
-                    <div style={{fontSize:12}} className="font-mono">{fmtDate(round.date)} · R{round.roundNumber} · DRS {round.drsNumber}</div>
-                    <div style={{fontSize:12}} className="font-mono">D:{round.deliveredFinal} P:{round.pickupCount} Ret:{round.returnedCount}</div>
-                    {round.pickupDetails?.length > 0 && <div style={{fontSize:10,color:"#F5A623",marginTop:3}}>Pickup clients: {round.pickupDetails.map((p)=>`${p.client}: ${p.count}`).join(" · ")}{round.pickupOtherCount ? ` · Other: ${round.pickupOtherCount}` : ""}</div>}
-                    <div style={{fontSize:10,color:"#8AA5FF",marginTop:3}}>Approved by: {round.approvedBy || "Legacy record"}{round.approvedAtMs ? ` · ${new Date(round.approvedAtMs).toLocaleString("en-IN")}` : ""}</div>
-                  </div>
-                ))
-              }
-            </div>
-          </div>
+
         </>
       )}
     </div>
   );
+}
+
+function RoundHistoryTab({ riders, rounds }) {
+  const [riderId, setRiderId] = useState(riders.find(r=>r.role==="rider")?.id || "");
+  const [month, setMonth] = useState(monthKey(todayISO()));
+  const [type, setType] = useState("all");
+  const [status, setStatus] = useState("all");
+  const rows = rounds.filter(r => (!riderId || r.riderId===riderId) && monthKey(r.date)===month && (type==="all" || (type==="pickup" ? r.roundType==="pickup" : r.roundType!=="pickup")) && (status==="all" || r.approved===status))
+    .sort((a,b)=>(a.date===b.date ? (Number(b.roundNumber)||0)-(Number(a.roundNumber)||0) : (a.date<b.date?1:-1)));
+  const riderNameFor = id => riders.find(r=>r.id===id)?.name || "Unknown rider";
+  return <div style={{display:"flex",flexDirection:"column",gap:12}}>
+    <div className="section-label">Round History · Delivery & Pickup</div>
+    <select className="input" value={riderId} onChange={e=>setRiderId(e.target.value)}><option value="">All riders</option>{riders.filter(r=>r.role==="rider").map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select>
+    <input className="input" type="month" value={month} onChange={e=>setMonth(e.target.value)}/>
+    <div style={{display:"flex",gap:8}}><select className="input" value={type} onChange={e=>setType(e.target.value)}><option value="all">All round types</option><option value="delivery">Delivery rounds</option><option value="pickup">Pickup rounds</option></select><select className="input" value={status} onChange={e=>setStatus(e.target.value)}><option value="all">All statuses</option><option value="pending">Pending approval</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div>
+    <div className="stat-grid"><StatCard label="Rounds" value={rows.length} color="#8AA5FF"/><StatCard label="Delivered" value={rows.reduce((n,r)=>n+(Number(r.deliveredFinal)||0),0)} color="#3DDC97"/><StatCard label="Pickup parcels" value={rows.reduce((n,r)=>n+(Number(r.pickupCount)||0),0)} color="#F5A623"/><StatCard label="Returned" value={rows.reduce((n,r)=>n+(Number(r.returnedCount)||0),0)} color="#E5484D"/></div>
+    <div className="list-card">{rows.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No round records for these filters.</div> : rows.map(r=><div key={r.id} className="list-row" style={{display:"block",padding:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"start"}}><div style={{fontWeight:800,fontSize:13}}>{r.roundType==="pickup"?`Pickup Round ${r.roundNumber||"—"}`:`Delivery Round ${r.roundNumber||"—"}`}</div><span className={`badge ${r.approved==="approved"?"badge-approved":r.approved==="rejected"?"badge-rejected":"badge-pending"}`}>{r.approved||"open"}</span></div>
+      <div style={{fontSize:11,color:"#7C8592",marginTop:3}}>{riderNameFor(r.riderId)} · {fmtDate(r.date)}{r.drsNumber?` · DRS ${r.drsNumber}`:" · No DRS required"}</div>
+      <div style={{fontSize:12,marginTop:6}}>Taken: {r.deliveryCount||0} · Delivered: {r.deliveredFinal||0} · Returned: {r.returnedCount||0} · Pickup: {r.pickupCount||0}{r.weightKg?` · Weight: ${r.weightKg} kg`:""}</div>
+      {r.returnType==="rto" && <div style={{fontSize:11,color:"#E5484D",marginTop:4}}>RTO docket: {r.rtoDocketNumber||"Not recorded"} ({r.rtoServiceType||"service type not recorded"})</div>}
+      {r.undeliveredReason && <div style={{fontSize:11,color:"#F5A623",marginTop:4}}>Undelivered reason: {r.undeliveredReason}</div>}
+      {r.pickupDetails?.length>0 && <div style={{fontSize:11,color:"#F5A623",marginTop:4}}>Clients: {r.pickupDetails.map(p=>`${p.client} (${p.count})`).join(" · ")}</div>}
+    </div>)}</div>
+  </div>;
 }
 
 // ---------------- Attendance (mark + view, daily + monthly) ----------------
