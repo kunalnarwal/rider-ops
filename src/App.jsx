@@ -234,19 +234,19 @@ export default function App() {
       .then(() => { try { sessionStorage.setItem(key, "1"); } catch {} })
       .catch((err) => console.error("Could not record app visit", err));
   }, [user?.id]);
-  // Client-side fallback: close any still-open morning/evening duty at 9:15 PM.
-  // For guaranteed operation when nobody has the app open, this same rule must also run in a scheduled trusted backend job.
+  // Client-side fallback: close open duty records at that date's 9:15 PM cutoff.
+  // This runs while the app is open and catches up old open records on next visit.
+  // A guaranteed background close while all clients are offline requires a scheduled Firebase backend job.
   useEffect(() => {
     const closeExpiredDuty = async () => {
       const now = new Date();
-      if (now.getHours() < 21 || (now.getHours() === 21 && now.getMinutes() < 15)) return;
       const today = todayISO();
-      const cutoff = new Date(now); cutoff.setHours(21, 15, 0, 0);
       for (const d of duty) {
-        if (d.date === today && (d.period === "morning" || d.period === "evening") && d.startTime && !d.endTime) {
-          try { await updateRec("duty", d.id, { endTime: cutoff.getTime(), autoClosed: true, autoClosedAtMs: Date.now() }); }
-          catch (err) { console.error("Could not auto-close duty", err); }
-        }
+        if (!(d.period === "morning" || d.period === "evening") || !d.startTime || d.endTime || !d.date || d.date > today) continue;
+        const cutoff = new Date(`${d.date}T21:15:00`);
+        if (now.getTime() < cutoff.getTime()) continue;
+        try { await updateRec("duty", d.id, { endTime: cutoff.getTime(), autoClosed: true, autoClosedAtMs: Date.now() }); }
+        catch (err) { console.error("Could not auto-close duty", err); }
       }
     };
     closeExpiredDuty();
@@ -659,7 +659,7 @@ function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, atten
               <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:26,color:"#3DDC97"}}>{fmtHours(Date.now()-myMorningDuty.startTime)}</div>
               <div style={{fontSize:11,color:"#7C8592",marginBottom:10}}>Started at {new Date(myMorningDuty.startTime).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div>
               <button onClick={()=>endDuty(myMorningDuty)} className="btn-primary" style={{background:"#E5484D",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                <Square size={14}/> End Morning Duty
+                <Square size={14}/> OUT
               </button>
             </>
           ) : myMorningDuty && myMorningDuty.endTime ? (
@@ -688,7 +688,7 @@ function HomeTab({ user, isAdmin, isFounder, riders, leaves, rounds, duty, atten
               <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:26,color:"#3DDC97"}}>{fmtHours(Date.now()-myEveningDuty.startTime)}</div>
               <div style={{fontSize:11,color:"#7C8592",marginBottom:10}}>Started at {new Date(myEveningDuty.startTime).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div>
               <button onClick={()=>endDuty(myEveningDuty)} className="btn-primary" style={{background:"#E5484D",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                <Square size={14}/> End Evening Duty
+                <Square size={14}/> OUT
               </button>
             </>
           ) : myEveningDuty && myEveningDuty.endTime ? (
@@ -1014,11 +1014,15 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const [showOtherPickupClients, setShowOtherPickupClients] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [showPickupRound, setShowPickupRound] = useState(false);
+  const [groupWithRoundId, setGroupWithRoundId] = useState("");
 
   const targetId = isAdmin ? viewRiderId : user.id;
   const myRoundsToday = useMemo(()=> rounds.filter(r=>r.riderId===targetId && r.date===date).sort((a,b)=>a.roundNumber-b.roundNumber), [rounds, targetId, date]);
   const openRounds = myRoundsToday.filter(r=>!r.closed);
-  const nextRoundNumber = myRoundsToday.reduce((max, r) => Math.max(max, Number(r.roundNumber) || 0), 0) + 1;
+  const nextDeliveryNumber = myRoundsToday.filter(r=>r.roundType!=="pickup").reduce((max, r) => Math.max(max, Number(r.roundNumber) || 0), 0) + 1;
+  const nextPickupNumber = myRoundsToday.filter(r=>r.roundType==="pickup").reduce((max, r) => Math.max(max, Number(r.roundNumber) || 0), 0) + 1;
+  const nextRoundNumber = nextDeliveryNumber;
+  const openDeliveryRounds = myRoundsToday.filter(r=>r.roundType!=="pickup" && !r.closed);
   // A DRS is unique: do not allow the same DRS in any existing round, regardless of rider/date/status.
   const normalizedDrs = drs.trim();
   const duplicateDrsRound = normalizedDrs ? rounds.find(r => r.roundType !== "pickup" && String(r.drsNumber || "").trim() === normalizedDrs) : null;
@@ -1028,7 +1032,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
     const pickupDetails = selectedPickupClients.filter(client => client !== "Other").map(client => ({ client, count: Math.max(0, parseInt(pickupQuantities[client], 10) || 0) })).filter(item => item.count > 0);
     if (!pickupDetails.length) { alert("Select at least one pickup client and enter its parcel count."); return; }
     if (pickupWeightKg !== "" && (!Number.isFinite(Number(pickupWeightKg)) || Number(pickupWeightKg) <= 0)) { alert("Enter a valid pickup weight in kg, or leave it blank."); return; }
-    await addRec("rounds", { riderId: targetId, date, roundNumber: nextRoundNumber, roundType: "pickup", drsNumber: "", deliveryCount: 0, weightKg: pickupWeightKg === "" ? null : Number(pickupWeightKg), closed: true, approved: "pending", returnedCount: 0, deliveredFinal: 0, pickupCount: pickupDetails.reduce((sum, item) => sum + item.count, 0), pickupDetails, pickupOtherCount: 0, closedBy: user.name, closedById: user.id, closedAtMs: Date.now() });
+    await addRec("rounds", { riderId: targetId, date, roundNumber: nextPickupNumber, roundType: "pickup", drsNumber: "", deliveryCount: 0, weightKg: pickupWeightKg === "" ? null : Number(pickupWeightKg), closed: true, approved: "pending", returnedCount: 0, deliveredFinal: 0, pickupCount: pickupDetails.reduce((sum, item) => sum + item.count, 0), pickupDetails, pickupOtherCount: 0, closedBy: user.name, closedById: user.id, closedAtMs: Date.now() });
     setSelectedPickupClients([]); setPickupQuantities({}); setPickupWeightKg(""); setShowOtherPickupClients(false); setShowPickupRound(false);
   };
 
@@ -1038,12 +1042,19 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
     if (duplicate) { alert(`DRS ${drs.trim()} is already added${duplicate.riderId ? " in another round" : ""}. Please scan or enter a different DRS number.`); return; }
     if (!deliveryCount || Number(deliveryCount) <= 0) return;
     if (weightKg !== "" && (!Number.isFinite(Number(weightKg)) || Number(weightKg) <= 0)) { alert("Enter a valid weight in kg, or leave it blank."); return; }
-    const nextNum = nextRoundNumber;
+    const selectedTripRound = openDeliveryRounds.find(r=>r.id===groupWithRoundId);
+    let tripGroupId = `trip-${targetId}-${date}-${Date.now()}`;
+    let nextNum = nextDeliveryNumber;
+    if (selectedTripRound) {
+      tripGroupId = selectedTripRound.tripGroupId || selectedTripRound.id;
+      nextNum = Number(selectedTripRound.roundNumber) || nextDeliveryNumber;
+      if (!selectedTripRound.tripGroupId) await updateRec("rounds", selectedTripRound.id, { tripGroupId });
+    }
     await addRec("rounds", {
-      riderId: targetId, date, roundNumber: nextNum, drsNumber: drs.trim(),
+      riderId: targetId, date, roundNumber: nextNum, tripGroupId, drsNumber: drs.trim(), roundType:"delivery",
       deliveryCount: parseInt(deliveryCount,10), weightKg: weightKg === "" ? null : Number(weightKg), closed:false, pickupCount:null, returnedCount:null, deliveredFinal:null,
     });
-    setDrs(""); setDeliveryCount(""); setWeightKg("");
+    setDrs(""); setDeliveryCount(""); setWeightKg(""); setGroupWithRoundId("");
   };
 
   const openCloseModal = (r) => { setClosingRound(r); setHadReturns(null); setHadPickup(null); setReturnedInput(""); setUndeliveredReason(""); setRtoDocket(""); setRtoServiceType("normal"); setReturnDisposition("undelivered"); setPickupInput(""); setSelectedPickupClients([]); setPickupQuantities({}); setShowOtherPickupClients(false); };
@@ -1106,8 +1117,8 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
       )}
 
       <div className="card" style={{display:"flex",flexDirection:"column",gap:10,borderColor: openRounds.length ? "rgba(245,166,35,0.45)" : undefined}}>
-        <div className="section-label">Start Delivery Round {nextRoundNumber}</div>
-        {openRounds.length > 0 && <p style={{fontSize:12,color:"#F5A623",margin:0}}>You can start another DRS for newly received parcels even while an earlier round is still open. Close each round separately when finished.</p>}
+        <div className="section-label">Start Delivery Trip {nextDeliveryNumber}</div>
+        {openRounds.length > 0 && <p style={{fontSize:12,color:"#F5A623",margin:0}}>If another DRS belongs to the same physical trip, choose that trip below. It will count as one delivery trip, while each DRS keeps its own parcel and return details.</p>}
         <div style={{display:"flex",gap:8}}>
           <input value={drs} onChange={(e)=>setDrs(e.target.value)} placeholder="DRS Number (mandatory)" className="input" style={{flex:1,borderColor:isDuplicateDrs?"#E5484D":undefined}}/>
           <button onClick={()=>setScanning(true)} className="btn-ghost" style={{display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
@@ -1115,10 +1126,11 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
           </button>
         </div>
         {isDuplicateDrs && <div role="alert" style={{fontSize:12,color:"#E5484D",background:"rgba(229,72,77,0.10)",border:"1px solid rgba(229,72,77,0.45)",borderRadius:8,padding:10}}>DRS already added. This number exists in {duplicateDrsRound.roundType === "pickup" ? "a pickup round" : `Delivery Round ${duplicateDrsRound.roundNumber || ""}`} on {duplicateDrsRound.date || "an earlier date"}. You cannot add it again.</div>}
+        {openDeliveryRounds.length>0 && <div style={{display:"flex",flexDirection:"column",gap:5}}><label style={{fontSize:11,color:"#7C8592"}}>Does this DRS belong to an already-started trip?</label><select value={groupWithRoundId} onChange={e=>setGroupWithRoundId(e.target.value)} className="input"><option value="">No — start a new delivery trip</option>{openDeliveryRounds.map(or=><option key={or.id} value={or.id}>Same trip as DRS {or.drsNumber} (Trip {or.roundNumber})</option>)}</select></div>}
         <input type="number" value={deliveryCount} onChange={(e)=>setDeliveryCount(e.target.value)} placeholder="How many parcels are you taking" className="input font-mono"/>
         <input type="number" min="0.1" step="0.1" value={weightKg} onChange={(e)=>setWeightKg(e.target.value)} placeholder="Total parcel weight in kg (optional)" className="input font-mono"/>
         <p style={{fontSize:11,color:"#7C8592",margin:"-4px 0 0"}}>Optional: add the approximate total weight of parcels in this DRS. Leave blank if unknown.</p>
-        <button onClick={startRound} disabled={!/^\d{19}$/.test(drs.trim()) || isDuplicateDrs || !deliveryCount || Number(deliveryCount) <= 0} className="btn-primary">{isDuplicateDrs ? "DRS Already Added" : `Start Delivery Round ${nextRoundNumber}`}</button>
+        <button onClick={startRound} disabled={!/^\d{19}$/.test(drs.trim()) || isDuplicateDrs || !deliveryCount || Number(deliveryCount) <= 0} className="btn-primary">{isDuplicateDrs ? "DRS Already Added" : `Start Delivery Trip ${nextDeliveryNumber}`}</button>
       </div>
 
       <div className="card" style={{display:"flex",flexDirection:"column",gap:10,borderColor:"rgba(245,166,35,0.4)"}}>
@@ -1133,7 +1145,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
           {myRoundsToday.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No rounds yet.</div> :
             myRoundsToday.map(r=>(
               <div key={r.id} className="list-row" style={{overflowX:"auto",alignItems:"flex-start",gap:14}}><div style={{minWidth:240,flex:"1 0 240px"}}>
-                  <div style={{fontSize:13,fontWeight:600}}>{r.roundType === "pickup" ? `Pickup Round ${r.roundNumber}` : `Delivery Round ${r.roundNumber} · DRS ${r.drsNumber}`}</div>
+                  <div style={{fontSize:13,fontWeight:600}}>{r.roundType === "pickup" ? `Pickup Round ${r.roundNumber}` : `Delivery Trip ${r.roundNumber} · DRS ${r.drsNumber}`}</div>
                   <div style={{fontSize:11,color:"#7C8592"}} className="font-mono">
                     Out: {r.roundType === "pickup" ? `Pickup parcels: ${r.pickupCount ?? 0}` : r.deliveryCount}{r.weightKg != null ? ` · Weight: ${r.weightKg} kg` : ""} {r.roundType === "pickup" ? "" : (r.closed ? `· Delivered: ${r.deliveredFinal} · Returned: ${r.returnedCount} · Pickup: ${r.pickupCount}` : "· Pending closure")}
                     {r.pickupDetails?.length > 0 && <div style={{fontSize:10,color:"#F5A623",marginTop:3}}>Clients: {r.pickupDetails.map((p)=>`${p.client} (${p.count})`).join(", ")}{r.pickupOtherCount ? `, Other (${r.pickupOtherCount})` : ""}</div>}
@@ -1992,7 +2004,7 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
           </div>
 
           <div>
-            <div className="section-label">Daily Summary — {thisMonth}</div><div style={{fontSize:11,color:"#7C8592",marginBottom:8}}>Daily totals + attendance in/out for each date. Duty Times below shows each individual attendance record.</div>
+            <div className="section-label">Daily Summary — {thisMonth}</div><div style={{fontSize:11,color:"#7C8592",marginBottom:8}}>Tap a delivery, pickup or return total in Round History for full date-wise details.</div>
             <div className="list-card">
               {dailyBreakdown.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No data for this month yet.</div> :
                 dailyBreakdown.map(d=>(
@@ -2014,12 +2026,12 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
                       <div style={{textAlign:"center"}}>
                         <div className="font-mono" style={{fontSize:11,color:"#3DDC97"}}>{d.morningIn ? fmtTime(d.morningIn) : "—"}</div>
                         <div style={{fontSize:9,color:"#3DDC97",fontWeight:800,background:"rgba(61,220,151,.12)",padding:"3px 5px",borderRadius:4}}>MORNING IN</div>
-                        <div className="font-mono" style={{fontSize:10,color:"#E5484D",marginTop:4}}>{d.morningOut ? fmtTime(d.morningOut) : "—"}</div><div style={{fontSize:9,color:"#E5484D",fontWeight:800,background:"rgba(229,72,77,.12)",padding:"3px 5px",borderRadius:4}}>MORNING OUT</div>
+                        <div className="font-mono" style={{fontSize:10,color:"#E5484D",marginTop:4}}>{d.morningOut ? fmtTime(d.morningOut) : "—"}</div><div style={{fontSize:9,color:"#E5484D",fontWeight:800,background:"rgba(229,72,77,.12)",padding:"3px 5px",borderRadius:4}}>OUT</div>
                       </div>
                       <div style={{textAlign:"center"}}>
                         <div className="font-mono" style={{fontSize:11,color:"#3DDC97"}}>{d.eveningIn ? fmtTime(d.eveningIn) : "—"}</div>
                         <div style={{fontSize:9,color:"#3DDC97",fontWeight:800,background:"rgba(61,220,151,.12)",padding:"3px 5px",borderRadius:4}}>EVENING IN</div>
-                        <div className="font-mono" style={{fontSize:10,color:"#E5484D",marginTop:4}}>{d.eveningOut ? fmtTime(d.eveningOut) : "—"}</div><div style={{fontSize:9,color:"#E5484D",fontWeight:800,background:"rgba(229,72,77,.12)",padding:"3px 5px",borderRadius:4}}>EVENING OUT</div>
+                        <div className="font-mono" style={{fontSize:10,color:"#E5484D",marginTop:4}}>{d.eveningOut ? fmtTime(d.eveningOut) : "—"}</div><div style={{fontSize:9,color:"#E5484D",fontWeight:800,background:"rgba(229,72,77,.12)",padding:"3px 5px",borderRadius:4}}>OUT</div>
                       </div>
                     </div>
                   </div>
@@ -2042,23 +2054,48 @@ function RoundHistoryTab({ riders, rounds }) {
   const [month, setMonth] = useState(monthKey(todayISO()));
   const [type, setType] = useState("all");
   const [status, setStatus] = useState("all");
+  const [detail, setDetail] = useState("");
+  const riderNameFor = id => riders.find(r=>r.id===id)?.name || "Unknown rider";
   const rows = rounds.filter(r => (!riderId || r.riderId===riderId) && monthKey(r.date)===month && (type==="all" || (type==="pickup" ? r.roundType==="pickup" : r.roundType!=="pickup")) && (status==="all" || r.approved===status))
     .sort((a,b)=>(a.date===b.date ? (Number(b.roundNumber)||0)-(Number(a.roundNumber)||0) : (a.date<b.date?1:-1)));
-  const riderNameFor = id => riders.find(r=>r.id===id)?.name || "Unknown rider";
+  const approvedRows = rows.filter(r=>r.closed && r.approved==="approved");
+  const delivered = approvedRows.reduce((n,r)=>n+(Number(r.deliveredFinal)||0),0);
+  const pickup = approvedRows.reduce((n,r)=>n+(Number(r.pickupCount)||0),0);
+  const returned = approvedRows.reduce((n,r)=>n+(Number(r.returnedCount)||0),0);
+  const rto = approvedRows.filter(r=>r.returnType==="rto").reduce((n,r)=>n+(Number(r.returnedCount)||0),0);
+  const undelivered = approvedRows.filter(r=>(Number(r.returnedCount)||0)>0 && r.returnType!=="rto").reduce((n,r)=>n+(Number(r.returnedCount)||0),0);
+  const tripKey = r => r.tripGroupId || `${r.riderId}-${r.date}-legacy-${r.roundNumber || r.id}`;
+  const deliveryTrips = new Set(approvedRows.filter(r=>r.roundType!=="pickup").map(tripKey)).size;
+  const daily = {};
+  approvedRows.forEach(r=>{
+    const d=daily[r.date] ||= {date:r.date, delivered:0, pickup:0, returned:0, rto:0, undelivered:0, clients:{}, drs:[], rounds:[]};
+    d.delivered += Number(r.deliveredFinal)||0; d.pickup += Number(r.pickupCount)||0; d.returned += Number(r.returnedCount)||0;
+    if(r.returnType==="rto") d.rto += Number(r.returnedCount)||0; else if((Number(r.returnedCount)||0)>0) d.undelivered += Number(r.returnedCount)||0;
+    if(r.drsNumber) d.drs.push(r.drsNumber);
+    d.rounds.push(r);
+    (Array.isArray(r.pickupDetails)?r.pickupDetails:[]).forEach(p=>{ d.clients[p.client]=(d.clients[p.client]||0)+(Number(p.count)||0); });
+  });
+  const dailyRows=Object.values(daily).sort((a,b)=>a.date<b.date?1:-1);
+  const clickableStat = (label,value,color,key) => <button onClick={()=>setDetail(detail===key?"":key)} className="card" style={{textAlign:"left",cursor:"pointer",borderColor:detail===key?color:"#2A3038",color:"inherit",minWidth:0}}><div className="font-mono" style={{fontSize:28,color}}>{value}</div><div style={{fontSize:11,color:"#7C8592",textTransform:"uppercase"}}>{label}</div><div style={{fontSize:10,color,marginTop:5}}>Tap to view date-wise details ↗</div></button>;
+  const detailLabel = {delivered:"Delivered parcels",pickup:"Pickup parcels by date and client",pickupRounds:"Pickup rounds by date",returned:"Returned parcels",rto:"RTO parcels",undelivered:"Undelivered parcels"};
   return <div style={{display:"flex",flexDirection:"column",gap:12}}>
-    <div className="section-label">Round History · Delivery & Pickup</div>
+    <div className="section-label">Rider performance · Simple daily view</div>
     <select className="input" value={riderId} onChange={e=>setRiderId(e.target.value)}><option value="">All riders</option>{riders.filter(r=>r.role==="rider").map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select>
     <input className="input" type="month" value={month} onChange={e=>setMonth(e.target.value)}/>
-    <div style={{display:"flex",gap:8}}><select className="input" value={type} onChange={e=>setType(e.target.value)}><option value="all">All round types</option><option value="delivery">Delivery rounds</option><option value="pickup">Pickup rounds</option></select><select className="input" value={status} onChange={e=>setStatus(e.target.value)}><option value="all">All statuses</option><option value="pending">Pending approval</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div>
-    <div className="stat-grid"><StatCard label="Rounds" value={rows.length} color="#8AA5FF"/><StatCard label="Delivered" value={rows.reduce((n,r)=>n+(Number(r.deliveredFinal)||0),0)} color="#3DDC97"/><StatCard label="Pickup parcels" value={rows.reduce((n,r)=>n+(Number(r.pickupCount)||0),0)} color="#F5A623"/><StatCard label="Returned" value={rows.reduce((n,r)=>n+(Number(r.returnedCount)||0),0)} color="#E5484D"/></div>
-    <div className="list-card">{rows.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No round records for these filters.</div> : rows.map(r=><div key={r.id} className="list-row" style={{display:"block",padding:14}}>
-      <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"start"}}><div style={{fontWeight:800,fontSize:13}}>{r.roundType==="pickup"?`Pickup Round ${r.roundNumber||"—"}`:`Delivery Round ${r.roundNumber||"—"}`}</div><span className={`badge ${r.approved==="approved"?"badge-approved":r.approved==="rejected"?"badge-rejected":"badge-pending"}`}>{r.approved||"open"}</span></div>
-      <div style={{fontSize:11,color:"#7C8592",marginTop:3}}>{riderNameFor(r.riderId)} · {fmtDate(r.date)}{r.drsNumber?` · DRS ${r.drsNumber}`:" · No DRS required"}</div>
-      <div style={{fontSize:12,marginTop:6}}>Taken: {r.deliveryCount||0} · Delivered: {r.deliveredFinal||0} · Returned: {r.returnedCount||0} · Pickup: {r.pickupCount||0}{r.weightKg?` · Weight: ${r.weightKg} kg`:""}</div>
-      {r.returnType==="rto" && <div style={{fontSize:11,color:"#E5484D",marginTop:4}}>RTO docket: {r.rtoDocketNumber||"Not recorded"} ({r.rtoServiceType||"service type not recorded"})</div>}
-      {r.undeliveredReason && <div style={{fontSize:11,color:"#F5A623",marginTop:4}}>Undelivered reason: {r.undeliveredReason}</div>}
-      {r.pickupDetails?.length>0 && <div style={{fontSize:11,color:"#F5A623",marginTop:4}}>Clients: {r.pickupDetails.map(p=>`${p.client} (${p.count})`).join(" · ")}</div>}
+    <div style={{display:"flex",gap:8}}><select className="input" value={type} onChange={e=>setType(e.target.value)}><option value="all">All activity</option><option value="delivery">Delivery only</option><option value="pickup">Pickup only</option></select><select className="input" value={status} onChange={e=>setStatus(e.target.value)}><option value="all">All approval statuses</option><option value="pending">Pending approval</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div>
+    <div className="stat-grid">{clickableStat("Delivery trips",deliveryTrips,"#8AA5FF","trips")}{clickableStat("Pickup rounds",new Set(approvedRows.filter(r=>r.roundType==="pickup").map(r=>`${r.riderId}-${r.date}-${r.roundNumber||r.id}`)).size,"#F5A623","pickupRounds")}{clickableStat("Delivered",delivered,"#3DDC97","delivered")}{clickableStat("Pickup parcels",pickup,"#F5A623","pickup")}{clickableStat("Returned",returned,"#E5484D","returned")}{clickableStat("RTO",rto,"#E5484D","rto")}{clickableStat("Undelivered",undelivered,"#F5A623","undelivered")}</div>
+    {detail && <div className="card" style={{borderColor:"#F5A623"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div className="section-label" style={{margin:0}}>{detail==="trips"?"Delivery trips by date":detailLabel[detail]||detail}</div><button className="btn-ghost" onClick={()=>setDetail("")}>Close</button></div>
+      {detail==="trips" ? dailyRows.map(d=><div key={d.date} className="list-row"><span>{fmtDate(d.date)}</span><b>{new Set(d.rounds.filter(r=>r.roundType!=="pickup").map(tripKey)).size} trips · {d.drs.length} DRS</b></div>) : detail==="pickupRounds" ? dailyRows.map(d=><div key={d.date} className="list-row"><span>{fmtDate(d.date)}</span><b>{d.rounds.filter(r=>r.roundType==="pickup").length} pickup rounds · {d.pickup} parcels</b></div>) : detail==="pickup" ? dailyRows.filter(d=>d.pickup>0).map(d=><div key={d.date} style={{padding:"10px 0",borderBottom:"1px solid #2A3038"}}><b>{fmtDate(d.date)} · {d.pickup} parcels</b>{Object.entries(d.clients).length ? Object.entries(d.clients).map(([client,count])=><div key={client} style={{fontSize:12,color:"#F5A623",marginTop:4}}>{client}: {count} parcels</div>):<div style={{fontSize:12,color:"#7C8592"}}>Client detail not saved for this record.</div>}</div>) : dailyRows.filter(d=>d[detail]>0).map(d=><div key={d.date} className="list-row"><span>{fmtDate(d.date)}</span><b>{d[detail]} parcels</b></div>)}
+      {detail!=="trips" && !(detail==="pickupRounds"?dailyRows.some(d=>d.rounds.some(r=>r.roundType==="pickup")):detail==="pickup"?dailyRows.some(d=>d.pickup>0):dailyRows.some(d=>d[detail]>0)) && <div style={{fontSize:12,color:"#7C8592",paddingTop:10}}>No approved records for this metric in the selected month.</div>}
+    </div>}
+    <div className="section-label">Date-wise record</div>
+    <div className="list-card">{dailyRows.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No approved round records for these filters.</div> : dailyRows.map(d=><div key={d.date} style={{padding:14,borderBottom:"1px solid #22272E"}}>
+      <div style={{fontWeight:800,marginBottom:8}}>{fmtDate(d.date)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>{[["Delivered",d.delivered,"#3DDC97"],["Pickup parcels",d.pickup,"#F5A623"],["RTO",d.rto,"#E5484D"],["Undelivered",d.undelivered,"#F5A623"]].map(([label,value,color])=><div key={label} style={{background:"#171B20",padding:9,borderRadius:8}}><div style={{fontSize:19,color}}>{value}</div><div style={{fontSize:10,color:"#7C8592"}}>{label}</div></div>)}</div>
+      {Object.keys(d.clients).length>0 && <div style={{marginTop:8,fontSize:12,color:"#F5A623"}}>Pickup clients: {Object.entries(d.clients).map(([c,n])=>`${c} (${n})`).join(" · ")}</div>}
+      {d.rounds.map(r=><div key={r.id} style={{fontSize:11,color:"#7C8592",marginTop:6}}>{riderNameFor(r.riderId)} · {r.roundType==="pickup"?`Pickup Round ${r.roundNumber}`:`Delivery Trip ${r.roundNumber||"—"} · DRS ${r.drsNumber||"—"}`} · {r.approved}</div>)}
     </div>)}</div>
+    <div style={{fontSize:11,color:"#7C8592"}}>Only closed and approved records are included in totals. Old records without a trip ID are shown using their saved round numbers; trips cannot be reliably merged retroactively unless their shared trip is recorded.</div>
   </div>;
 }
 
