@@ -197,7 +197,6 @@ const TABS = [
   { id: "riders", label: "Riders", icon: Users, adminOnly: true },
   { id: "reports", label: "Reports", icon: FileText, adminOnly: true },
   { id: "dutytimes", label: "Duty Times", icon: Clock, adminOnly: true },
-  { id: "roundhistory", label: "Round History", icon: Package, adminOnly: true },
   { id: "visits", label: "Recent Visits", icon: Clock, founderOnly: true },
 ];
 
@@ -370,7 +369,6 @@ export default function App() {
         {tab==="reports" && isAdmin && <ReportsTab riders={riders} leaves={leaves} rounds={rounds} odometer={odometer}
           adminFuel={adminFuel} personalFuel={personalFuel} attendance={attendance} riderName={riderName} duty={duty}/>}
         {tab==="dutytimes" && isAdmin && <DutyTimesTab riders={riders} duty={duty}/> }
-        {tab==="roundhistory" && isAdmin && <RoundHistoryTab riders={riders} rounds={rounds}/>}
         {tab==="visits" && isFounder && <RecentVisitsTab visits={visits}/> }
       </main>
 
@@ -1021,6 +1019,7 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
   const [scanning, setScanning] = useState(false);
   const [showPickupRound, setShowPickupRound] = useState(false);
   const [groupWithRoundId, setGroupWithRoundId] = useState("");
+  const [monthDetail, setMonthDetail] = useState("");
 
   const targetId = isAdmin ? viewRiderId : user.id;
   const myRoundsToday = useMemo(()=> rounds.filter(r=>r.riderId===targetId && r.date===date).sort((a,b)=>a.roundNumber-b.roundNumber), [rounds, targetId, date]);
@@ -1189,11 +1188,28 @@ function RoundsTab({ user, isAdmin, isFounder, riders, rounds, riderName }) {
       </div>
 
       <div className="card">
-        <div className="section-label">This Month's Total</div>
+        <div className="section-label">This Month's Total · Tap for date-wise details</div>
         <div className="stat-grid">
-          <StatCard label="Total Delivered" value={monthDelivered} color="#3DDC97"/>
-          <StatCard label="Total Pickup" value={monthPickup} color="#F5A623"/>
+          <button type="button" onClick={()=>setMonthDetail(monthDetail==="delivered"?"":"delivered")} className="card" style={{textAlign:"left",cursor:"pointer",borderColor:monthDetail==="delivered"?"#3DDC97":"#2A3038",color:"inherit"}}>
+            <div className="font-mono" style={{fontSize:28,color:"#3DDC97"}}>{monthDelivered}</div><div style={{fontSize:11,color:"#7C8592",textTransform:"uppercase"}}>Total Delivered</div><div style={{fontSize:10,color:"#3DDC97",marginTop:5}}>Tap to view dates ↗</div>
+          </button>
+          <button type="button" onClick={()=>setMonthDetail(monthDetail==="pickup"?"":"pickup")} className="card" style={{textAlign:"left",cursor:"pointer",borderColor:monthDetail==="pickup"?"#F5A623":"#2A3038",color:"inherit"}}>
+            <div className="font-mono" style={{fontSize:28,color:"#F5A623"}}>{monthPickup}</div><div style={{fontSize:11,color:"#7C8592",textTransform:"uppercase"}}>Total Pickup</div><div style={{fontSize:10,color:"#F5A623",marginTop:5}}>Tap to view dates & clients ↗</div>
+          </button>
         </div>
+        {monthDetail && <div style={{marginTop:12,borderTop:"1px solid #2A3038",paddingTop:10}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:8}}><div className="section-label" style={{margin:0}}>{monthDetail==="delivered"?"Delivered · Date-wise":"Pickup · Date-wise clients"}</div><button type="button" className="btn-ghost" onClick={()=>setMonthDetail("")}>Close</button></div>
+          {(() => {
+            const daily = {};
+            monthRounds.forEach(x=>{ const d=daily[x.date] ||= {date:x.date,delivered:0,pickup:0,clients:{},records:[]}; d.delivered += Number(x.deliveredFinal)||0; d.pickup += Number(x.pickupCount)||0; d.records.push(x); (Array.isArray(x.pickupDetails)?x.pickupDetails:[]).forEach(v=>{d.clients[v.client]=(d.clients[v.client]||0)+(Number(v.count)||0);}); });
+            const rows=Object.values(daily).filter(d=>monthDetail==="delivered"?d.delivered>0:d.pickup>0).sort((a,b)=>a.date<b.date?1:-1);
+            return rows.length ? rows.map(d=><div key={d.date} style={{padding:"10px 0",borderBottom:"1px solid #252B33"}}>
+              <div style={{display:"flex",justifyContent:"space-between",gap:8,fontWeight:700,fontSize:12}}><span>{fmtDate(d.date)}</span><span style={{color:monthDetail==="delivered"?"#9BE7BD":"#F5A623"}}>{monthDetail==="delivered"?`${d.delivered} delivered`:`${d.pickup} pickup parcels`}</span></div>
+              {monthDetail==="pickup" && (Object.keys(d.clients).length ? Object.entries(d.clients).map(([client,count])=><div key={client} style={{fontSize:11,color:"#F5A623",marginTop:4}}>{client}: {count} parcels</div>) : <div style={{fontSize:11,color:"#7C8592",marginTop:4}}>Client details not saved for this date.</div>)}
+              {monthDetail==="delivered" && <div style={{fontSize:10,color:"#7C8592",marginTop:4}}>{d.records.filter(x=>Number(x.deliveredFinal)>0).map(x=>`DRS ${x.drsNumber||"—"}: ${Number(x.deliveredFinal)||0}`).join(" · ")}</div>}
+            </div>) : <div style={{fontSize:12,color:"#7C8592",padding:"8px 0"}}>No approved {monthDetail} records for this month.</div>;
+          })()}
+        </div>}
       </div>
       </>
       )}
@@ -2048,8 +2064,9 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
             </div>
           </div>
 
-          <div className="card" style={{fontSize:11,color:"#7C8592"}}>Attendance IN/OUT timings are already shown in the Daily Summary above. Use the separate Round History tab for detailed round-wise delivery, pickup and return records.</div>
-
+          <div className="card" style={{fontSize:11,color:"#7C8592"}}>Attendance IN/OUT timings are shown in the Daily Summary. Full round-wise delivery, pickup clients, RTO and undelivered details are available below.</div>
+          <div className="divider" />
+          <RoundHistoryTab riders={riders} rounds={rounds}/>
 
         </>
       )}
@@ -2109,6 +2126,7 @@ function RoundHistoryTab({ riders, rounds }) {
 // ---------------- Duty Times (admin date-wise attendance times for all riders) ----------------
 function DutyTimesTab({ riders, duty }) {
   const [date, setDate] = useState(todayISO());
+  const [showLateArrivals, setShowLateArrivals] = useState(false);
   const riderRows = riders.filter(r => r.role === "rider").map(r => {
     const records = duty.filter(d => d.riderId === r.id && d.date === date);
     const morning = records.filter(d => d.period === "morning").sort((a,b)=>(Number(a.startTime)||0)-(Number(b.startTime)||0))[0];
@@ -2141,7 +2159,7 @@ function DutyTimesTab({ riders, duty }) {
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
         <div style={{fontSize:11,color,fontWeight:800,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>{label}{late && <span style={{background:"rgba(229,72,77,0.16)",color:"#E5484D",borderRadius:5,padding:"3px 6px",fontSize:9,letterSpacing:.4}}>LATE</span>}</div>
         <div style={{display:"flex",alignItems:"baseline",gap:7,whiteSpace:"nowrap"}}>
-          <span className="font-mono" style={{fontSize:19,fontWeight:800,letterSpacing:.4,color:late?"#E5484D":"#F0F2F5"}}>{clock}</span>
+          <span className="font-mono" style={{fontSize:19,fontWeight:800,letterSpacing:.4,color:late?"#E5484D":"#9BE7BD"}}>{clock}</span>
           {meridiem && <span style={{fontSize:11,fontWeight:900,letterSpacing:.7,color:meridiemColor,background:meridiem === "AM" ? "rgba(105,183,255,.13)" : "rgba(198,160,255,.14)",padding:"4px 6px",borderRadius:5}}>{meridiem}</span>}
         </div>
       </div>
@@ -2160,6 +2178,24 @@ function DutyTimesTab({ riders, duty }) {
       </div>
     </div>)}</div>
     <div style={{fontSize:10,color:"#7C8592"}}>— means no saved time. OUT TIME shows the latest saved OUT time for that rider on the selected date.</div>
+    <button type="button" className="card" onClick={()=>setShowLateArrivals(v=>!v)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,textAlign:"left",cursor:"pointer",borderColor:showLateArrivals?"#E5484D":"#2A3038",color:"inherit"}}>
+      <div><div style={{fontWeight:800,color:"#E5484D"}}>Late Arrivals</div><div style={{fontSize:11,color:"#7C8592",marginTop:4}}>View all dates when riders were late for morning or evening duty</div></div><span style={{color:"#E5484D",fontWeight:800}}>{showLateArrivals?"Hide ▲":"View ▼"}</span>
+    </button>
+    {showLateArrivals && (()=>{
+      const lateRows=[];
+      const formatLateTime=ts=>ts?new Date(Number(ts)).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}):"—";
+      riders.filter(r=>r.role==="rider").forEach(r=>{
+        const byDate={};
+        duty.filter(d=>d.riderId===r.id && d.startTime && (d.period==="morning"||d.period==="evening")).forEach(d=>{
+          const mins=new Date(Number(d.startTime)).getHours()*60+new Date(Number(d.startTime)).getMinutes();
+          const isMorningLate=d.period==="morning" && mins>570;
+          const isEveningLate=d.period==="evening" && mins>(String(r.name||"").trim().toLowerCase()==="rajeev kumar"?1170:1140);
+          if(isMorningLate||isEveningLate) lateRows.push({id:d.id,rider:r.name,date:d.date,period:d.period,time:formatLateTime(d.startTime)});
+        });
+      });
+      lateRows.sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:a.rider.localeCompare(b.rider));
+      return <div className="list-card">{lateRows.length===0?<div style={{padding:14,fontSize:12,color:"#7C8592"}}>No late arrivals recorded.</div>:lateRows.map(x=><div key={x.id} className="list-row"><div><div style={{fontSize:12,fontWeight:700}}>{x.rider}</div><div style={{fontSize:11,color:"#7C8592",marginTop:3}}>{fmtDate(x.date)} · {x.period==="morning"?"Morning IN":"Evening IN"}</div></div><div style={{fontSize:13,fontWeight:800,color:"#E5484D"}}>{x.time} · LATE</div></div>)}</div>;
+    })()}
   </div>;
 }
 
@@ -2262,8 +2298,8 @@ function AttendanceTab({ user, isAdmin, riders, attendance, leaves, duty = [] })
                   <span style={{fontSize:10,fontWeight:800,color:sunday?"#A78BFA":style.color,background:sunday?"rgba(167,139,250,.14)":style.bg,padding:"3px 7px",borderRadius:5}}>{sunday?"SUNDAY":day.status.toUpperCase()}</span>
                 </div>
                 {!sunday && <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:7}}>
-                  <div style={{background:"#1A2027",borderRadius:7,padding:8}}><div style={{fontSize:9,color:"#3DDC97",fontWeight:800}}>MORNING IN {info.morningLate && <span style={{color:"#E5484D",marginLeft:4}}>· LATE</span>}</div><div className="font-mono" style={{fontSize:12,marginTop:4}}>{fmtTime(info.morning?.startTime)}</div></div>
-                  <div style={{background:"#1A2027",borderRadius:7,padding:8}}><div style={{fontSize:9,color:"#3DDC97",fontWeight:800}}>EVENING IN {info.eveningLate && <span style={{color:"#E5484D",marginLeft:4}}>· LATE</span>}</div><div className="font-mono" style={{fontSize:12,marginTop:4}}>{fmtTime(info.evening?.startTime)}</div></div>
+                  <div style={{background:"rgba(61,220,151,.11)",border:"1px solid rgba(61,220,151,.22)",borderRadius:7,padding:8}}><div style={{fontSize:9,color:"#3DDC97",fontWeight:800}}>MORNING IN {info.morningLate && <span style={{color:"#E5484D",marginLeft:4}}>· LATE</span>}</div><div className="font-mono" style={{fontSize:12,marginTop:4,fontWeight:800,color:info.morningLate?"#E5484D":"#9BE7BD"}}>{fmtTime(info.morning?.startTime)}</div></div>
+                  <div style={{background:"rgba(61,220,151,.11)",border:"1px solid rgba(61,220,151,.22)",borderRadius:7,padding:8}}><div style={{fontSize:9,color:"#3DDC97",fontWeight:800}}>EVENING IN {info.eveningLate && <span style={{color:"#E5484D",marginLeft:4}}>· LATE</span>}</div><div className="font-mono" style={{fontSize:12,marginTop:4,fontWeight:800,color:info.eveningLate?"#E5484D":"#9BE7BD"}}>{fmtTime(info.evening?.startTime)}</div></div>
                 </div>}
                 {sunday && <div style={{fontSize:10,color:"#A78BFA"}}>Weekly off · excluded from absent count unless manually marked.</div>}
                 {isAdmin && !sunday && <div style={{display:"flex",gap:5,marginTop:8}}>{STATUS_OPTS.map(opt=><button key={opt.key} onClick={()=>setStatus(r.id,opt.key,day.date)} style={{flex:1,fontSize:10,padding:"5px 0",borderRadius:5,border:"1px solid",borderColor:day.status===opt.key?opt.color:"#2A3038",background:day.status===opt.key?opt.color+"22":"transparent",color:day.status===opt.key?opt.color:"#7C8592"}}>{opt.label}</button>)}</div>}
