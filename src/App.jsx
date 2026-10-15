@@ -95,7 +95,7 @@ function riderTotalsForMonth(rounds, mk, duty = [], leaves = [], riders = []) {
     const mins = t.getHours()*60 + t.getMinutes();
     const name = (riders.find(r=>r.id===d.riderId)?.name || "").toLowerCase();
     const cutoff = d.period === "morning" ? 9*60+30 : (name === "rajeev kumar" ? 19*60+30 : 19*60);
-    if ((d.period === "morning" && mins < cutoff) || (d.period !== "morning" && mins <= cutoff)) x.punctualDuties += 1;
+    if (mins <= cutoff) x.punctualDuties += 1;
   });
   leaves.filter((l) => l.status === "approved" && monthKey(l.date) === mk).forEach((l) => {
     const x = ensure(l.riderId);
@@ -2114,158 +2114,165 @@ function DutyTimesTab({ riders, duty }) {
     const morning = records.filter(d => d.period === "morning").sort((a,b)=>(Number(a.startTime)||0)-(Number(b.startTime)||0))[0];
     const evening = records.filter(d => d.period === "evening").sort((a,b)=>(Number(a.startTime)||0)-(Number(b.startTime)||0))[0];
     const fmt = ts => ts ? new Date(Number(ts)).toLocaleTimeString("en-IN", {hour:"2-digit", minute:"2-digit"}) : "—";
-    return { id:r.id, name:r.name, morningIn:fmt(morning?.startTime), morningOut:fmt(morning?.endTime), eveningIn:fmt(evening?.startTime), eveningOut:fmt(evening?.endTime) };
+    const minsOf = ts => {
+      if (!ts) return null;
+      const t = new Date(Number(ts));
+      return t.getHours() * 60 + t.getMinutes();
+    };
+    const name = String(r.name || "").trim().toLowerCase();
+    const morningLate = minsOf(morning?.startTime) !== null && minsOf(morning?.startTime) > (9 * 60 + 30);
+    const eveningLimit = name === "rajeev kumar" ? (19 * 60 + 30) : (19 * 60);
+    const eveningLate = minsOf(evening?.startTime) !== null && minsOf(evening?.startTime) > eveningLimit;
+    const outTimes = [...new Set(records.filter(d => d.endTime != null && d.endTime !== "").map(d => Number(d.endTime)).filter(Number.isFinite))].sort((a,b)=>a-b);
+    return {
+      id:r.id, name:r.name,
+      morningIn:fmt(morning?.startTime), eveningIn:fmt(evening?.startTime),
+      morningLate, eveningLate,
+      outTime: outTimes.length ? fmt(Math.max(...outTimes)) : "—",
+      hasIn: Boolean(morning?.startTime || evening?.startTime)
+    };
   }).sort((a,b)=>a.name.localeCompare(b.name));
+  const timeCard = (label, time, late, color) => {
+    const parts = String(time || "—").match(/^(.*?)(?:\s+(am|pm))$/i);
+    const clock = parts ? parts[1] : String(time || "—");
+    const meridiem = parts ? parts[2].toUpperCase() : "";
+    const meridiemColor = meridiem === "AM" ? "#69B7FF" : "#C6A0FF";
+    return <div style={{background:"#171B20",padding:"12px 13px",borderRadius:9,minWidth:0,border:"1px solid #252B33"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+        <div style={{fontSize:11,color,fontWeight:800,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>{label}{late && <span style={{background:"rgba(229,72,77,0.16)",color:"#E5484D",borderRadius:5,padding:"3px 6px",fontSize:9,letterSpacing:.4}}>LATE</span>}</div>
+        <div style={{display:"flex",alignItems:"baseline",gap:7,whiteSpace:"nowrap"}}>
+          <span className="font-mono" style={{fontSize:19,fontWeight:800,letterSpacing:.4,color:late?"#E5484D":"#F0F2F5"}}>{clock}</span>
+          {meridiem && <span style={{fontSize:11,fontWeight:900,letterSpacing:.7,color:meridiemColor,background:meridiem === "AM" ? "rgba(105,183,255,.13)" : "rgba(198,160,255,.14)",padding:"4px 6px",borderRadius:5}}>{meridiem}</span>}
+        </div>
+      </div>
+    </div>;
+  };
   return <div style={{display:"flex",flexDirection:"column",gap:12}}>
     <div className="section-label">Duty Times · All riders</div>
     <div className="card"><label style={{display:"block",fontSize:11,color:"#7C8592",marginBottom:6}}>Select date</label><input type="date" className="input font-mono" value={date} onChange={e=>setDate(e.target.value)}/></div>
-    <div className="card" style={{fontSize:12,color:"#7C8592"}}>{fmtDate(date)} · {riderRows.filter(r=>r.morningIn!=="—" || r.eveningIn!=="—").length} riders have an IN record</div>
+    <div className="card" style={{fontSize:12,color:"#7C8592"}}>{fmtDate(date)} · {riderRows.filter(r=>r.hasIn).length} riders have an IN record. Late after 9:30 AM (morning) or 7:00 PM (evening); Rajeev Kumar's evening limit is 7:30 PM.</div>
     <div className="list-card">{riderRows.length===0 ? <div style={{padding:16,color:"#7C8592"}}>No riders found.</div> : riderRows.map(r=><div key={r.id} style={{padding:"12px 14px",borderBottom:"1px solid #22272E"}}>
-      <div style={{fontWeight:700,fontSize:13,marginBottom:8}}>{r.name}</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>
-        <div style={{background:"#171B20",padding:9,borderRadius:8}}><div style={{fontSize:9,color:"#3DDC97",fontWeight:800}}>MORNING IN</div><div className="font-mono" style={{fontSize:15,marginTop:3}}>{r.morningIn}</div></div>
-        <div style={{background:"#171B20",padding:9,borderRadius:8}}><div style={{fontSize:9,color:"#3DDC97",fontWeight:800}}>EVENING IN</div><div className="font-mono" style={{fontSize:15,marginTop:3}}>{r.eveningIn}</div></div>
-        <div style={{background:"#171B20",padding:9,borderRadius:8}}><div style={{fontSize:9,color:"#E5484D",fontWeight:800}}>MORNING OUT</div><div className="font-mono" style={{fontSize:13,marginTop:3}}>{r.morningOut}</div></div>
-        <div style={{background:"#171B20",padding:9,borderRadius:8}}><div style={{fontSize:9,color:"#E5484D",fontWeight:800}}>EVENING OUT</div><div className="font-mono" style={{fontSize:13,marginTop:3}}>{r.eveningOut}</div></div>
+      <div style={{fontWeight:700,fontSize:14,marginBottom:9}}>{r.name}</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {timeCard("MORNING IN",r.morningIn,r.morningLate,"#3DDC97")}
+        {timeCard("EVENING IN",r.eveningIn,r.eveningLate,"#3DDC97")}
+        {timeCard("OUT TIME",r.outTime,false,"#E5484D")}
       </div>
     </div>)}</div>
-    <div style={{fontSize:10,color:"#7C8592"}}>— means no saved duty record for that rider and period on the selected date.</div>
+    <div style={{fontSize:10,color:"#7C8592"}}>— means no saved time. OUT TIME shows the latest saved OUT time for that rider on the selected date.</div>
   </div>;
 }
 
 // ---------------- Attendance (mark + view, daily + monthly) ----------------
 function AttendanceTab({ user, isAdmin, riders, attendance, leaves, duty = [] }) {
   const [date, setDate] = useState(todayISO());
+  const [expandedRiders, setExpandedRiders] = useState({});
   const visibleRiders = isAdmin ? riders.filter(r=>r.role==="rider") : riders.filter(r=>r.id===user.id);
+  const selectedMonth = monthKey(date || todayISO());
+  const [year, month] = selectedMonth.split("-").map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const monthDates = Array.from({length:daysInMonth}, (_,i)=>`${selectedMonth}-${String(i+1).padStart(2,"0")}`);
 
   const statusFor = (riderId, d) => {
     const saved = attendance.find(a=>a.riderId===riderId && a.date===d);
     if (saved) return saved;
-    // Backfill display status for historic dates when duty IN was recorded before
-    // attendance was automatically linked to the duty action.
     const hasDutyIn = duty.some(x=>x.riderId===riderId && x.date===d && (x.period==="morning" || x.period==="evening") && x.startTime);
     return hasDutyIn ? { status:"present", derivedFromDuty:true } : undefined;
   };
   const onLeave = (riderId, d) => leaves.some(l=>l.riderId===riderId && l.date===d && l.status==="approved");
-  const setStatus = async (riderId, status) => {
-    const existing = statusFor(riderId, date);
+  const setStatus = async (riderId, status, targetDate=date) => {
+    const existing = attendance.find(a=>a.riderId===riderId && a.date===targetDate);
     if (existing) await updateRec("attendance", existing.id, { status });
-    else await addRec("attendance", { riderId, date, status });
+    else await addRec("attendance", { riderId, date:targetDate, status });
   };
   const STATUS_OPTS = [
     { key:"present", label:"Present", color:"#3DDC97" },
     { key:"late", label:"Late", color:"#F5A623" },
     { key:"absent", label:"Absent", color:"#E5484D" },
   ];
-
+  const minsOf = ts => {
+    if (ts === undefined || ts === null || ts === "") return null;
+    const n = Number(ts);
+    if (!Number.isFinite(n)) return null;
+    const t = new Date(n);
+    return t.getHours()*60+t.getMinutes();
+  };
+  const fmtTime = ts => ts ? new Date(Number(ts)).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) : "—";
+  const dutyInfoFor = (rider, d) => {
+    const records = duty.filter(x=>x.riderId===rider.id && x.date===d);
+    const morning = records.filter(x=>x.period==="morning" && x.startTime).sort((a,b)=>Number(a.startTime)-Number(b.startTime))[0];
+    const evening = records.filter(x=>x.period==="evening" && x.startTime).sort((a,b)=>Number(a.startTime)-Number(b.startTime))[0];
+    const morningLate = minsOf(morning?.startTime)!==null && minsOf(morning?.startTime)>(9*60+30);
+    const eveningLimit = String(rider.name||"").trim().toLowerCase()==="rajeev kumar" ? (19*60+30) : (19*60);
+    const eveningLate = minsOf(evening?.startTime)!==null && minsOf(evening?.startTime)>eveningLimit;
+    return {morning, evening, morningLate, eveningLate};
+  };
   const thisMonth = monthKey(todayISO());
   const monthlyCount = (riderId, status) => {
     if (status === "present") {
-      const explicit = attendance.filter(a=>a.riderId===riderId && monthKey(a.date)===thisMonth && a.status==="present");
+      const explicit = attendance.filter(a=>a.riderId===riderId && monthKey(a.date)===thisMonth && (a.status==="present" || a.status==="late"));
       const dates = new Set(explicit.map(a=>a.date));
       duty.filter(d=>d.riderId===riderId && monthKey(d.date)===thisMonth && (d.period==="morning" || d.period==="evening") && d.startTime).forEach(d=>{
         const saved = attendance.find(a=>a.riderId===riderId && a.date===d.date);
-        if (!saved || saved.status === "present") dates.add(d.date);
+        if (!saved || saved.status === "present" || saved.status === "late") dates.add(d.date);
       });
       return dates.size;
     }
     return attendance.filter(a=>a.riderId===riderId && monthKey(a.date)===thisMonth && a.status===status).length;
   };
+  const statusStyle = status => status==="present" ? {color:"#3DDC97",bg:"rgba(61,220,151,.12)"} : status==="late" ? {color:"#F5A623",bg:"rgba(245,166,35,.12)"} : status==="absent" ? {color:"#E5484D",bg:"rgba(229,72,77,.12)"} : status==="on leave" ? {color:"#A78BFA",bg:"rgba(167,139,250,.12)"} : {color:"#7C8592",bg:"rgba(124,133,146,.12)"};
 
-  return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} className="input font-mono"/>
-      <div className="list-card">
-        {visibleRiders.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No riders found.</div> :
-          visibleRiders.map(r=>{
-            const current = statusFor(r.id, date)?.status;
-            const leave = onLeave(r.id, date);
-            return (
-              <div key={r.id} style={{padding:"10px 14px",borderBottom:"1px solid #22272E"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <span style={{fontSize:13,fontWeight:600}}>{r.name}</span>
-                  {leave && <span className="badge badge-rejected">on leave</span>}
-                </div>
-                {isAdmin ? (
-                  <div style={{display:"flex",gap:6}}>
-                    {STATUS_OPTS.map(opt=>(
-                      <button key={opt.key} onClick={()=>setStatus(r.id, opt.key)}
-                        style={{flex:1,fontSize:11,fontWeight:500,padding:"6px 0",borderRadius:6,border:"1px solid",cursor:"pointer",
-                          background: current===opt.key ? opt.color+"22" : "transparent",
-                          borderColor: current===opt.key ? opt.color : "#2A3038",
-                          color: current===opt.key ? opt.color : "#7C8592"}}>
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{fontSize:12}}>
-                    {current ? <span className="badge" style={{background: current==="present"?"rgba(61,220,151,0.15)":current==="late"?"rgba(245,166,35,0.15)":"rgba(229,72,77,0.15)", color: current==="present"?"#3DDC97":current==="late"?"#F5A623":"#E5484D"}}>{current}</span> : <span style={{color:"#7C8592"}}>Not marked yet</span>}
-                  </div>
-                )}
-                <div style={{fontSize:10,color:"#5B6270",marginTop:6}} className="font-mono">
-                  This month — Present: {monthlyCount(r.id,"present")} · Late: {monthlyCount(r.id,"late")} · Absent: {monthlyCount(r.id,"absent")}
-                </div>
-              </div>
-            );
-          })
-        }
-      </div>
-    </div>
-  );
-}
-
-// ---------------- Admin/Company Fuel Log (liters, amount, odometer) ----------------
-function AdminFuelTab({ riders, adminFuel, riderName }) {
-  const [riderId, setRiderId] = useState("");
-  const [date, setDate] = useState(todayISO());
-  const [liters, setLiters] = useState("");
-  const [amount, setAmount] = useState("");
-  const [odo, setOdo] = useState("");
-
-  const submit = async () => {
-    if (!riderId || !liters || !amount) return;
-    await addRec("adminFuel", { riderId, date, liters: parseFloat(liters), amount: parseFloat(amount), odometer: odo?parseFloat(odo):null });
-    setLiters(""); setAmount(""); setOdo("");
-  };
-  const remove = (id) => deleteRec("adminFuel", id);
-  const totalSpend = adminFuel.reduce((s,f)=>s+f.amount,0);
-  const totalLiters = adminFuel.reduce((s,f)=>s+f.liters,0);
-
-  return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      <div className="stat-grid">
-        <StatCard label="Total Spend" value={`₹${totalSpend.toFixed(0)}`} color="#F5A623"/>
-        <StatCard label="Total Liters" value={totalLiters.toFixed(1)} color="#3DDC97"/>
-      </div>
-      <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
-        <div className="section-label">Company Fuel Entry (Admin Only)</div>
-        <select value={riderId} onChange={(e)=>setRiderId(e.target.value)} className="input">
-          <option value="">Select rider</option>
-          {riders.filter(r=>r.role==="rider").map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
-        </select>
-        <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} className="input font-mono"/>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-          <input type="number" value={liters} onChange={(e)=>setLiters(e.target.value)} placeholder="Liters" className="input font-mono"/>
-          <input type="number" value={amount} onChange={(e)=>setAmount(e.target.value)} placeholder="Amount ₹" className="input font-mono"/>
-        </div>
-        <input type="number" value={odo} onChange={(e)=>setOdo(e.target.value)} placeholder="Odometer (optional)" className="input font-mono"/>
-        <button onClick={submit} disabled={!riderId||!liters||!amount} className="btn-primary">Save Entry</button>
-      </div>
-      <div className="list-card">
-        {adminFuel.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No entries yet.</div> :
-          adminFuel.map(f=>(
-            <div key={f.id} className="list-row">
-              <div>
-                <div style={{fontSize:13,fontWeight:600}}>{riderName(f.riderId)}</div>
-                <div style={{fontSize:11,color:"#7C8592"}} className="font-mono">{fmtDate(f.date)} · {f.liters}L · ₹{f.amount}{f.odometer?` · ${f.odometer}km`:""}</div>
-              </div>
-              <button onClick={()=>remove(f.id)} style={{background:"none",border:"none",color:"#7C8592",cursor:"pointer"}}><Trash2 size={14}/></button>
+  return <div style={{display:"flex",flexDirection:"column",gap:16}}>
+    <input type="date" value={date} onChange={e=>setDate(e.target.value)} className="input font-mono" />
+    <div style={{fontSize:11,color:"#7C8592"}}>Tap a rider's card to see each date of the selected month. Morning late after 9:30 AM; evening late after 7:00 PM (Rajeev Kumar: 7:30 PM). Sundays are shown separately.</div>
+    <div className="list-card">
+      {visibleRiders.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No riders found.</div> : visibleRiders.map(r=>{
+        const current = statusFor(r.id,date)?.status;
+        const leave = onLeave(r.id,date);
+        const expanded = Boolean(expandedRiders[r.id]);
+        const monthRecords = monthDates.map(d=>{
+          const dayObj = new Date(d+"T00:00:00");
+          const sunday = dayObj.getDay()===0;
+          const statusRecord = statusFor(r.id,d);
+          const approvedLeave = onLeave(r.id,d);
+          const info = dutyInfoFor(r,d);
+          const status = approvedLeave ? "on leave" : statusRecord?.status || (info.morning || info.evening ? "present" : "not marked");
+          return {date:d,dayObj,sunday,status,info};
+        });
+        return <div key={r.id} style={{borderBottom:"1px solid #22272E"}}>
+          <button type="button" onClick={()=>setExpandedRiders(prev=>({...prev,[r.id]:!prev[r.id]}))} style={{width:"100%",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"12px 14px",background:"transparent",border:"none",color:"inherit",cursor:"pointer",flexWrap:"wrap"}}>
+            <div style={{minWidth:0,flex:1}}>
+              <div style={{fontSize:13,fontWeight:700}}>{r.name}</div>
+              <div className="font-mono" style={{fontSize:10,color:"#7C8592",marginTop:5}}>This month — Present: {monthlyCount(r.id,"present")} · Late: {monthlyCount(r.id,"late")} · Absent: {monthlyCount(r.id,"absent")}</div>
             </div>
-          ))
-        }
-      </div>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              {leave && <span className="badge badge-rejected">on leave</span>}
+              {current && <span className="badge" style={{background:statusStyle(current).bg,color:statusStyle(current).color}}>{current}</span>}
+              <span style={{fontSize:11,color:"#7C8592"}}>{expanded ? "Hide details ▲" : "Full details ▼"}</span>
+            </div>
+          </button>
+          {isAdmin && !expanded && <div style={{padding:"0 14px 12px",display:"flex",gap:6}}>{STATUS_OPTS.map(opt=><button key={opt.key} onClick={()=>setStatus(r.id,opt.key)} style={{flex:1,fontSize:11,fontWeight:500,padding:"6px 0",borderRadius:6,border:"1px solid",cursor:"pointer",background:current===opt.key?opt.color+"22":"transparent",borderColor:current===opt.key?opt.color:"#2A3038",color:current===opt.key?opt.color:"#7C8592"}}>{opt.label}</button>)}</div>}
+          {expanded && <div style={{padding:"0 12px 12px",display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{fontSize:11,fontWeight:800,color:"#7C8592",letterSpacing:.5,marginTop:2}}>{new Date(year,month-1,1).toLocaleDateString("en-IN",{month:"long",year:"numeric"}).toUpperCase()} · DAILY ATTENDANCE</div>
+            {monthRecords.map(day=>{
+              const info=day.info, sunday=day.sunday, style=statusStyle(day.status);
+              return <div key={day.date} style={{padding:10,borderRadius:9,border:sunday?"1px solid rgba(167,139,250,.35)":"1px solid #252B33",background:sunday?"rgba(167,139,250,.08)":"#11151A"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:7}}>
+                  <div style={{fontSize:12,fontWeight:700}}>{day.dayObj.toLocaleDateString("en-IN",{weekday:"short",day:"2-digit",month:"short"})}</div>
+                  <span style={{fontSize:10,fontWeight:800,color:sunday?"#A78BFA":style.color,background:sunday?"rgba(167,139,250,.14)":style.bg,padding:"3px 7px",borderRadius:5}}>{sunday?"SUNDAY":day.status.toUpperCase()}</span>
+                </div>
+                {!sunday && <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:7}}>
+                  <div style={{background:"#1A2027",borderRadius:7,padding:8}}><div style={{fontSize:9,color:"#3DDC97",fontWeight:800}}>MORNING IN {info.morningLate && <span style={{color:"#E5484D",marginLeft:4}}>· LATE</span>}</div><div className="font-mono" style={{fontSize:12,marginTop:4}}>{fmtTime(info.morning?.startTime)}</div></div>
+                  <div style={{background:"#1A2027",borderRadius:7,padding:8}}><div style={{fontSize:9,color:"#3DDC97",fontWeight:800}}>EVENING IN {info.eveningLate && <span style={{color:"#E5484D",marginLeft:4}}>· LATE</span>}</div><div className="font-mono" style={{fontSize:12,marginTop:4}}>{fmtTime(info.evening?.startTime)}</div></div>
+                </div>}
+                {sunday && <div style={{fontSize:10,color:"#A78BFA"}}>Weekly off · excluded from absent count unless manually marked.</div>}
+                {isAdmin && !sunday && <div style={{display:"flex",gap:5,marginTop:8}}>{STATUS_OPTS.map(opt=><button key={opt.key} onClick={()=>setStatus(r.id,opt.key,day.date)} style={{flex:1,fontSize:10,padding:"5px 0",borderRadius:5,border:"1px solid",borderColor:day.status===opt.key?opt.color:"#2A3038",background:day.status===opt.key?opt.color+"22":"transparent",color:day.status===opt.key?opt.color:"#7C8592"}}>{opt.label}</button>)}</div>}
+              </div>;
+            })}
+          </div>}
+        </div>;
+      })}
     </div>
-  );
+  </div>;
 }
 
