@@ -6,7 +6,7 @@ import {
 import {
   Users, CalendarOff, ClipboardCheck, Fuel, Plus, Trash2, AlertTriangle, Clock,
   Package, Gauge, CalendarDays, LogOut, ShieldCheck, Megaphone, Sun, Sunset, Moon,
-  Check, X as XIcon, Play, Square, FileText, Bell, BellRing, Pencil, ScanLine, Moon as MoonIcon, Timer, Trophy,
+  Check, X as XIcon, Play, Square, FileText, Bell, BellRing, Pencil, ScanLine, Moon as MoonIcon, Timer, Trophy, Copy,
 } from "lucide-react";
 
 // ---------- constants ----------
@@ -194,7 +194,7 @@ const TABS = [
   { id: "calendar", label: "Calendar", icon: CalendarDays },
   { id: "panchang", label: "Panchang", icon: MoonIcon },
   { id: "announcements", label: "News", icon: Megaphone },
-  { id: "riders", label: "Riders", icon: Users, adminOnly: true },
+  { id: "riders", label: "Riders", icon: Users, founderOnly: true },
   { id: "reports", label: "Reports", icon: FileText, adminOnly: true },
   { id: "dutytimes", label: "Duty Times", icon: Clock, adminOnly: true },
   { id: "visits", label: "Recent Visits", icon: Clock, founderOnly: true },
@@ -365,7 +365,7 @@ export default function App() {
         {tab==="calendar" && <CalendarTab holidays={holidays} leaves={leaves} riders={riders} user={user} isAdmin={isAdmin} riderName={riderName}/>}
         {tab==="panchang" && <PanchangTab/>}
         {tab==="announcements" && <AnnouncementsTab user={user} isAdmin={isAdmin} announcements={announcements}/>}
-        {tab==="riders" && isAdmin && <RidersTab user={user} riders={riders} isFounder={isFounder} officeSetting={officeSetting} adminRequests={adminRequests}/>}
+        {tab==="riders" && isFounder && <RidersTab user={user} riders={riders} isFounder={isFounder} officeSetting={officeSetting} adminRequests={adminRequests}/>}
         {tab==="reports" && isAdmin && <ReportsTab riders={riders} leaves={leaves} rounds={rounds} odometer={odometer}
           adminFuel={adminFuel} personalFuel={personalFuel} attendance={attendance} riderName={riderName} duty={duty}/>}
         {tab==="dutytimes" && isAdmin && <DutyTimesTab riders={riders} duty={duty}/> }
@@ -2026,7 +2026,7 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
           </div>
 
           <div>
-            <div className="section-label">Daily Summary — {thisMonth}</div><div style={{fontSize:11,color:"#7C8592",marginBottom:8}}>Tap a delivery, pickup or undelivered total in Round History for full date-wise details.</div>
+            <div className="section-label">Daily Summary — {thisMonth}</div><div style={{fontSize:11,color:"#7C8592",marginBottom:8}}>Use the details below for date-wise delivery, pickup, DRS, RTO and undelivered records.</div>
             <div className="list-card">
               {dailyBreakdown.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No data for this month yet.</div> :
                 dailyBreakdown.map(d=>(
@@ -2038,7 +2038,7 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
                         <div style={{fontSize:9,color:"#7C8592"}}>PKTS</div>
                       </div>
                       <div style={{textAlign:"center"}}>
-                        <div className="font-mono" style={{fontSize:13,color:"#F5A623"}}>{d.pickups}</div>
+                        <div className="font-mono" style={{fontSize:13,color:"#F472B6"}}>{d.pickups}</div>
                         <div style={{fontSize:9,color:"#7C8592"}}>PICKUPS</div>
                       </div>
                       <div style={{textAlign:"center"}}>
@@ -2046,11 +2046,11 @@ function ReportsTab({ riders, leaves, rounds, odometer, adminFuel, personalFuel,
                         <div style={{fontSize:9,color:"#7C8592"}}>UNDELIVERED</div>
                       </div>
                       <div style={{textAlign:"center"}}>
-                        <div className="font-mono" style={{fontSize:11,color:"#3DDC97"}}>{d.morningIn ? fmtTime(d.morningIn) : "—"}</div>
+                        <div className="font-mono" style={{fontSize:11,color:d.morningIn && (new Date(Number(d.morningIn)).getHours()*60+new Date(Number(d.morningIn)).getMinutes())>570?"#E5484D":"#9BE7BD",fontWeight:700}}>{d.morningIn ? fmtTime(d.morningIn) : "—"}</div>
                         <div style={{fontSize:9,color:"#3DDC97",fontWeight:800,background:"rgba(61,220,151,.12)",padding:"3px 5px",borderRadius:4}}>MORNING IN</div>
                       </div>
                       <div style={{textAlign:"center"}}>
-                        <div className="font-mono" style={{fontSize:11,color:"#3DDC97"}}>{d.eveningIn ? fmtTime(d.eveningIn) : "—"}</div>
+                        <div className="font-mono" style={{fontSize:11,color:d.eveningIn && (new Date(Number(d.eveningIn)).getHours()*60+new Date(Number(d.eveningIn)).getMinutes())>((String(r?.name||"").trim().toLowerCase()==="rajeev kumar")?1170:1140)?"#E5484D":"#9BE7BD",fontWeight:700}}>{d.eveningIn ? fmtTime(d.eveningIn) : "—"}</div>
                         <div style={{fontSize:9,color:"#3DDC97",fontWeight:800,background:"rgba(61,220,151,.12)",padding:"3px 5px",borderRadius:4}}>EVENING IN</div>
                       </div>
                       <div style={{textAlign:"center"}}>
@@ -2109,7 +2109,7 @@ function RoundHistoryTab({ riders, rounds }) {
     <div style={{display:"flex",gap:8}}><select className="input" value={type} onChange={e=>setType(e.target.value)}><option value="all">All activity</option><option value="delivery">Delivery only</option><option value="pickup">Pickup only</option></select><select className="input" value={status} onChange={e=>setStatus(e.target.value)}><option value="all">All approval statuses</option><option value="pending">Pending approval</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div>
     <div className="stat-grid">{clickableStat("Delivery trips",deliveryTrips,"#8AA5FF","trips")}{clickableStat("Pickup rounds",new Set(approvedRows.filter(r=>r.roundType==="pickup").map(r=>`${r.riderId}-${r.date}-${r.roundNumber||r.id}`)).size,"#F5A623","pickupRounds")}{clickableStat("Delivered",delivered,"#3DDC97","delivered")}{clickableStat("Pickup parcels",pickup,"#F5A623","pickup")}{clickableStat("RTO",rto,"#E5484D","rto")}{clickableStat("Undelivered",undelivered,"#F5A623","undelivered")}</div>
     {detail && <div className="card" style={{borderColor:"#F5A623"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><div className="section-label" style={{margin:0}}>{detail==="trips"?"Delivery trips by date":detailLabel[detail]||detail}</div><button className="btn-ghost" onClick={()=>setDetail("")}>Close</button></div>
-      {detail==="trips" ? dailyRows.map(d=><div key={d.date} className="list-row"><span>{fmtDate(d.date)}</span><b>{new Set(d.rounds.filter(r=>r.roundType!=="pickup").map(tripKey)).size} trips · {d.drs.length} DRS</b></div>) : detail==="pickupRounds" ? dailyRows.map(d=><div key={d.date} className="list-row"><span>{fmtDate(d.date)}</span><b>{d.rounds.filter(r=>r.roundType==="pickup").length} pickup rounds · {d.pickup} parcels</b></div>) : detail==="pickup" ? dailyRows.filter(d=>d.pickup>0).map(d=><div key={d.date} style={{padding:"10px 0",borderBottom:"1px solid #2A3038"}}><b>{fmtDate(d.date)} · {d.pickup} parcels</b>{Object.entries(d.clients).length ? Object.entries(d.clients).map(([client,count])=><div key={client} style={{fontSize:12,color:"#F5A623",marginTop:4}}>{client}: {count} parcels</div>):<div style={{fontSize:12,color:"#7C8592"}}>Client detail not saved for this record.</div>}</div>) : dailyRows.filter(d=>d[detail]>0).map(d=><div key={d.date} className="list-row"><span>{fmtDate(d.date)}</span><b>{d[detail]} parcels</b></div>)}
+      {detail==="trips" ? dailyRows.map(d=><div key={d.date} style={{padding:"12px 0",borderBottom:"1px solid #2A3038"}}><div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"center",marginBottom:8}}><b>{fmtDate(d.date)}</b><span style={{fontSize:12,color:"#8AA5FF",fontWeight:800}}>{new Set(d.rounds.filter(x=>x.roundType!=="pickup").map(tripKey)).size} delivery trips · {d.drs.length} DRS</span></div>{d.rounds.filter(x=>x.roundType!=="pickup").map(x=><div key={x.id} style={{background:"#171B20",border:"1px solid #2A3038",borderRadius:8,padding:10,marginTop:7}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}><div style={{fontSize:12,fontWeight:900,color:"#F5A623"}}>DRS: {x.drsNumber||"Not recorded"}</div>{x.drsNumber && <button type="button" className="btn-ghost" onClick={async()=>{try{await navigator.clipboard.writeText(String(x.drsNumber));alert("DRS number copied");}catch{alert("Copy unavailable. Please select and copy the DRS number manually.");}}} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 8px",fontSize:10}}><Copy size={13}/> Copy DRS</button>}</div><div style={{fontSize:11,color:"#7C8592",marginTop:6}}>{x.roundType==="pickup"?"Pickup entry":`Delivery Trip ${x.roundNumber||"—"}`} · {x.approved}</div><div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:6,marginTop:8}}>{[["Total parcels",Number(x.deliveryCount)||0,"#E5E7EB"],["Delivered",Number(x.deliveredFinal)||0,"#3DDC97"],[x.returnType==="rto"?"RTO":"Undelivered",Number(x.returnedCount)||0,x.returnType==="rto"?"#E5484D":"#F5A623"],["Pickup parcels",Number(x.pickupCount)||0,"#F472B6"]].map(([label,value,color])=><div key={label} style={{background:"#101419",padding:7,borderRadius:6}}><div style={{fontSize:17,fontWeight:900,color}}>{value}</div><div style={{fontSize:9,color:"#7C8592"}}>{label}</div></div>)}</div>{x.returnType==="rto"&&<div style={{fontSize:11,color:"#E5484D",marginTop:6}}>Return type: RTO{x.rtoDocketNumber?` · Docket: ${x.rtoDocketNumber}`:""}</div>}{x.undeliveredReason&&<div style={{fontSize:11,color:"#F5A623",marginTop:5}}>Reason: {x.undeliveredReason}</div>}</div>)}</div>) : detail==="pickupRounds" ? dailyRows.map(d=><div key={d.date} className="list-row"><span>{fmtDate(d.date)}</span><b>{d.rounds.filter(r=>r.roundType==="pickup").length} pickup rounds · {d.pickup} parcels</b></div>) : detail==="pickup" ? dailyRows.filter(d=>d.pickup>0).map(d=><div key={d.date} style={{padding:"10px 0",borderBottom:"1px solid #2A3038"}}><b>{fmtDate(d.date)} · {d.pickup} parcels</b>{Object.entries(d.clients).length ? Object.entries(d.clients).map(([client,count])=><div key={client} style={{fontSize:12,color:"#F472B6",marginTop:4}}>{client}: {count} parcels</div>):<div style={{fontSize:12,color:"#7C8592"}}>Client detail not saved for this record.</div>}</div>) : dailyRows.filter(d=>d[detail]>0).map(d=><div key={d.date} className="list-row"><span>{fmtDate(d.date)}</span><b>{d[detail]} parcels</b></div>)}
       {detail!=="trips" && !(detail==="pickupRounds"?dailyRows.some(d=>d.rounds.some(r=>r.roundType==="pickup")):detail==="pickup"?dailyRows.some(d=>d.pickup>0):dailyRows.some(d=>d[detail]>0)) && <div style={{fontSize:12,color:"#7C8592",paddingTop:10}}>No approved records for this metric in the selected month.</div>}
     </div>}
     <div className="section-label">Date-wise record</div>
@@ -2117,7 +2117,7 @@ function RoundHistoryTab({ riders, rounds }) {
       <div style={{fontWeight:800,marginBottom:8}}>{fmtDate(d.date)}</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8}}>{[["Delivered",d.delivered,"#3DDC97"],["Pickup parcels",d.pickup,"#F5A623"],["RTO",d.rto,"#E5484D"],["Undelivered",d.undelivered,"#F5A623"]].map(([label,value,color])=><div key={label} style={{background:"#171B20",padding:9,borderRadius:8}}><div style={{fontSize:19,color}}>{value}</div><div style={{fontSize:10,color:"#7C8592"}}>{label}</div></div>)}</div>
       {Object.keys(d.clients).length>0 && <div style={{marginTop:8,fontSize:12,color:"#F5A623"}}>Pickup clients: {Object.entries(d.clients).map(([c,n])=>`${c} (${n})`).join(" · ")}</div>}
-      {d.rounds.map(r=><div key={r.id} style={{fontSize:11,color:"#7C8592",marginTop:6}}>{riderNameFor(r.riderId)} · {r.roundType==="pickup"?`Pickup Round ${r.roundNumber}`:`Delivery Trip ${r.roundNumber||"—"} · DRS ${r.drsNumber||"—"}`} · {r.approved}</div>)}
+      {d.rounds.map(r=><div key={r.id} style={{marginTop:8,padding:10,borderRadius:8,background:"#171B20",border:"1px solid #2A3038"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}><div style={{fontSize:12,fontWeight:900,color:r.roundType==="pickup"?"#F472B6":"#F5A623"}}>{r.roundType==="pickup"?`Pickup Round ${r.roundNumber||"—"}`:`Delivery Trip ${r.roundNumber||"—"}`} {r.drsNumber?`· DRS ${r.drsNumber}`:"· No DRS"}</div>{r.drsNumber&&<button type="button" className="btn-ghost" onClick={async()=>{try{await navigator.clipboard.writeText(String(r.drsNumber));alert("DRS number copied");}catch{alert("Copy unavailable. Please select and copy the DRS number manually.");}}} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 8px",fontSize:10}}><Copy size={13}/> Copy</button>}</div><div style={{fontSize:10,color:"#7C8592",marginTop:4}}>{riderNameFor(r.riderId)} · {r.approved}</div><div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:6,marginTop:8}}>{[["Total parcels",Number(r.deliveryCount)||0,"#E5E7EB"],["Delivered",Number(r.deliveredFinal)||0,"#3DDC97"],[r.returnType==="rto"?"RTO":"Undelivered",Number(r.returnedCount)||0,r.returnType==="rto"?"#E5484D":"#F5A623"],["Pickup",Number(r.pickupCount)||0,"#F472B6"]].map(([label,value,color])=><div key={label} style={{background:"#101419",padding:7,borderRadius:6}}><div style={{fontSize:16,fontWeight:900,color}}>{value}</div><div style={{fontSize:9,color:"#7C8592"}}>{label}</div></div>)}</div>{r.returnType==="rto"&&<div style={{fontSize:10,color:"#E5484D",marginTop:5}}>RTO docket: {r.rtoDocketNumber||"Not recorded"}</div>}{r.undeliveredReason&&<div style={{fontSize:10,color:"#F5A623",marginTop:5}}>Undelivered reason: {r.undeliveredReason}</div>}</div>)}
     </div>)}</div>
     <div style={{fontSize:11,color:"#7C8592"}}>Only closed and approved records are included in totals. Old records without a trip ID are shown using their saved round numbers; trips cannot be reliably merged retroactively unless their shared trip is recorded.</div>
   </div>;
