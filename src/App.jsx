@@ -181,7 +181,7 @@ function useCollection(name, sortField) {
 const addRec = (col, data) => addDoc(collection(db, col), data);
 const updateRec = (col, id, data) => updateDoc(doc(db, col, id), data);
 const deleteRec = (col, id) => deleteDoc(doc(db, col, id));
-const setRec = (col, id, data) => setDoc(doc(db, col, id), data);
+const setRec = (col, id, data, options) => setDoc(doc(db, col, id), data, options);
 
 const TABS = [
   { id: "home", label: "Home", icon: Clock },
@@ -290,7 +290,7 @@ export default function App() {
     const year = new Date().getFullYear();
     festivalSeedForYear(year).forEach((f) => {
       const { id, ...rest } = f;
-      setRec("holidays", id, { ...rest, seedYear: year, source: "auto" });
+      setRec("holidays", id, { ...rest, seedYear: year, source: "auto" }, { merge: true });
     });
   }, []);
 
@@ -1595,149 +1595,188 @@ function LeaderboardTab({ rounds, riders, user, riderName, duty = [], leaves = [
   );
 }
 
+function nthWeekdayOfMonth(year, monthIndex, weekday, nth) {
+  const first = new Date(year, monthIndex, 1).getDay();
+  return 1 + ((weekday - first + 7) % 7) + (nth - 1) * 7;
+}
+function getDateObservances(iso) {
+  const d = new Date(iso + "T00:00:00");
+  const y = d.getFullYear(), m = d.getMonth(), day = d.getDate(), dow = d.getDay();
+  const fixed = {
+    "01-01": ["New Year's Day"], "01-24": ["International Day of Education"],
+    "01-26": ["Republic Day (India)"], "02-14": ["Valentine's Day"],
+    "03-08": ["International Women's Day"], "03-20": ["International Day of Happiness"],
+    "04-07": ["World Health Day"], "04-22": ["Earth Day"],
+    "05-01": ["International Workers' Day / Labour Day"], "05-11": ["National Technology Day (India)"],
+    "06-05": ["World Environment Day"], "06-21": ["International Yoga Day"],
+    "07-11": ["World Population Day"], "08-15": ["Independence Day (India)"],
+    "09-05": ["Teachers' Day (India)"], "09-21": ["International Day of Peace"],
+    "10-02": ["Gandhi Jayanti", "International Day of Non-Violence"],
+    "10-24": ["United Nations Day"], "11-14": ["Children's Day (India)"],
+    "12-01": ["World AIDS Day"], "12-10": ["Human Rights Day"], "12-25": ["Christmas Day"],
+  };
+  const key = `${String(m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+  const events = [...(fixed[key] || [])];
+  if (m === 4 && dow === 0 && day === nthWeekdayOfMonth(y, 4, 0, 2)) events.push("Mother's Day (second Sunday of May)");
+  if (m === 5 && dow === 0 && day === nthWeekdayOfMonth(y, 5, 0, 3)) events.push("Father's Day (third Sunday of June)");
+  return events;
+}
 function CalendarTab({ holidays, persistHolidaysApi, leaves, riders, user, isAdmin, riderName }) {
   const [monthOffset, setMonthOffset] = useState(0);
+  const [selectedDate, setSelectedDate] = useState(todayISO());
   const [newHolDate, setNewHolDate] = useState(todayISO());
   const [newHolName, setNewHolName] = useState("");
+  const [newHolStatus, setNewHolStatus] = useState("holiday");
+  const [newHolUntil, setNewHolUntil] = useState("13:00");
+  const [editStatus, setEditStatus] = useState({});
+  const [editUntil, setEditUntil] = useState({});
   const base = new Date();
+  base.setDate(1);
   base.setMonth(base.getMonth() + monthOffset);
   const year = base.getFullYear(), month = base.getMonth();
   const daysInMonth = new Date(year, month+1, 0).getDate();
   const firstDow = new Date(year, month, 1).getDay();
   const monthLabel = base.toLocaleDateString("en-IN",{month:"long",year:"numeric"});
-
+  const monthPrefix = `${year}-${String(month+1).padStart(2,"0")}`;
   const approvedLeaves = leaves.filter(l=>l.status==="approved");
-  const cellsBefore = Array.from({length: firstDow});
   const days = Array.from({length: daysInMonth}, (_,i)=>i+1);
-
   const isoFor = (d) => `${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-
-  const myLeaveDays = approvedLeaves.filter(l=>l.riderId===user.id && l.date.startsWith(`${year}-${String(month+1).padStart(2,"0")}`));
-
-  const monthHolidays = holidays.filter(h=>h.date.startsWith(`${year}-${String(month+1).padStart(2,"0")}`)).sort((a,b)=>a.date>b.date?1:-1);
+  const myLeaveDays = approvedLeaves.filter(l=>l.riderId===user.id && l.date.startsWith(monthPrefix));
+  const monthHolidays = holidays.filter(h=>h.date.startsWith(monthPrefix)).sort((a,b)=>a.date>b.date?1:-1);
+  const selectedEvents = holidays.filter(h=>h.date===selectedDate);
+  const selectedObservances = getDateObservances(selectedDate);
+  const selectedLeave = approvedLeaves.filter(l=>l.date===selectedDate);
+  const explicitStatus = selectedEvents.find(h=>h.workStatus)?.workStatus;
+  const selectedStatus = explicitStatus || (isSunday(selectedDate) || selectedEvents.length ? "holiday" : "full-day");
+  const statusLabel = selectedStatus === "half-day" ? `Working day · Half day${selectedEvents.find(h=>h.workUntil)?.workUntil ? ` · until ${selectedEvents.find(h=>h.workUntil).workUntil}` : ""}` : selectedStatus === "full-day" ? "Working day · Full day" : "Holiday / Non-working day";
+  const statusColor = selectedStatus === "holiday" ? "#3DDC97" : selectedStatus === "half-day" ? "#F5A623" : "#8AA5FF";
 
   const addHoliday = async () => {
-    if (!newHolName.trim()) return;
-    await addRec("holidays", { date: newHolDate, name: newHolName.trim(), source: "custom" });
+    if (!newHolName.trim() || !newHolDate) return;
+    await addRec("holidays", { date: newHolDate, name: newHolName.trim(), source: "custom", workStatus: newHolStatus, ...(newHolStatus === "half-day" ? { workUntil: newHolUntil } : {}) });
+    setSelectedDate(newHolDate);
     setNewHolName("");
   };
   const removeHoliday = (id) => deleteRec("holidays", id);
+  const saveEventStatus = async (h) => {
+    const status = editStatus[h.id] ?? h.workStatus ?? "holiday";
+    const until = editUntil[h.id] ?? h.workUntil ?? "13:00";
+    await updateRec("holidays", h.id, { workStatus: status, ...(status === "half-day" ? { workUntil: until } : { workUntil: "" }) });
+  };
   const removeDuplicateHolidays = () => {
     const seen = new Set();
-    holidays.forEach((h) => {
-      const key = `${h.date}|${h.name}`;
-      if (seen.has(key)) deleteRec("holidays", h.id);
-      else seen.add(key);
-    });
+    holidays.forEach((h) => { const key = `${h.date}|${h.name}`; if (seen.has(key)) deleteRec("holidays", h.id); else seen.add(key); });
   };
   const hasDuplicates = useMemo(() => {
     const seen = new Set();
-    for (const h of holidays) {
-      const key = `${h.date}|${h.name}`;
-      if (seen.has(key)) return true;
-      seen.add(key);
-    }
+    for (const h of holidays) { const key = `${h.date}|${h.name}`; if (seen.has(key)) return true; seen.add(key); }
     return false;
   }, [holidays]);
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      <div className="card" style={{textAlign:"center",padding:"10px 14px"}}>
-        <div style={{fontSize:10,color:"#7C8592",textTransform:"uppercase",letterSpacing:"0.08em"}}>Today</div>
-        <div className="font-display" style={{fontSize:18,fontWeight:700,color:"#F5A623"}}>{fmtDate(todayISO())}</div>
+      <div className="card" style={{textAlign:"center",padding:"14px 16px",background:"linear-gradient(135deg,rgba(245,166,35,.10),rgba(138,165,255,.06))"}}>
+        <div style={{fontSize:11,color:"#9AA3AF",textTransform:"uppercase",letterSpacing:"0.12em",fontWeight:700}}>Today</div>
+        <div className="font-display" style={{fontSize:22,fontWeight:800,color:"#F5A623",marginTop:4}}>{fmtDate(todayISO())}</div>
+        <div style={{fontSize:12,color:"#9AA3AF",marginTop:5}}>Tap any date to view festivals, observances and work status.</div>
       </div>
 
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
         <button onClick={()=>setMonthOffset(m=>m-1)} className="btn-ghost">← Prev</button>
-        <div className="font-display" style={{fontWeight:700,fontSize:16}}>{monthLabel}</div>
+        <div className="font-display" style={{fontWeight:800,fontSize:18,textAlign:"center"}}>{monthLabel}</div>
         <button onClick={()=>setMonthOffset(m=>m+1)} className="btn-ghost">Next →</button>
       </div>
 
       <div>
-        <div className="cal-grid" style={{marginBottom:4}}>
-          {["S","M","T","W","T","F","S"].map((d,i)=><div key={i} style={{textAlign:"center",fontSize:10,color:"#7C8592"}}>{d}</div>)}
+        <div className="cal-grid" style={{marginBottom:8}}>
+          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d,i)=><div key={i} style={{textAlign:"center",fontSize:10,fontWeight:800,color:"#9AA3AF",letterSpacing:"0.04em"}}>{d}</div>)}
         </div>
         <div className="cal-grid">
-          {cellsBefore.map((_,i)=><div key={"b"+i}/>)}
+          {Array.from({length:firstDow},(_,i)=><div key={`blank-${i}`}/>) }
           {days.map(d=>{
             const iso = isoFor(d);
-            const holiday = isSunday(iso) || holidays.some(h=>h.date===iso);
+            const evs = holidays.filter(h=>h.date===iso);
+            const obs = getDateObservances(iso);
+            const override = evs.find(h=>h.workStatus)?.workStatus;
+            const dayStatus = override || (isSunday(iso)||evs.length ? "holiday" : "full-day");
             const onLeave = approvedLeaves.some(l=>l.date===iso);
-            const today = iso === todayISO();
-            let cls = "cal-cell";
-            if (holiday) cls += " holiday";
-            if (onLeave) cls += " leave";
-            if (today) cls += " today";
-            return <div key={d} className={cls} title={holiday?"Holiday":onLeave?"Rider on leave":""}>{d}</div>;
+            const today = iso === todayISO(), selected = iso === selectedDate;
+            const bg = dayStatus === "holiday" ? "rgba(61,220,151,.15)" : dayStatus === "half-day" ? "rgba(245,166,35,.14)" : (evs.length||obs.length) ? "rgba(138,165,255,.10)" : "#101317";
+            const border = selected ? "2px solid #F5A623" : onLeave ? "1px solid rgba(229,72,77,.75)" : dayStatus === "holiday" ? "1px solid rgba(61,220,151,.45)" : dayStatus === "half-day" ? "1px solid rgba(245,166,35,.55)" : "1px solid #292E36";
+            return <button key={d} type="button" className="cal-cell" onClick={()=>setSelectedDate(iso)} aria-label={`${fmtDate(iso)} details`} title={[...evs.map(h=>h.name),...obs].join(", ")} style={{background:bg,border,borderRadius:10,minHeight:52,color:selected?"#F5A623":dayStatus==="holiday"?"#3DDC97":"#E5E7EB",fontSize:14,fontWeight:today||selected?800:600,position:"relative",cursor:"pointer",boxShadow:selected?"0 0 0 1px rgba(245,166,35,.12)":"none"}}>
+              {d}
+              {(evs.length>0||obs.length>0) && <span style={{position:"absolute",bottom:5,left:"50%",transform:"translateX(-50%)",width:5,height:5,borderRadius:10,background:dayStatus==="holiday"?"#3DDC97":dayStatus==="half-day"?"#F5A623":"#8AA5FF"}}/>}
+              {onLeave && <span style={{position:"absolute",top:4,right:4,width:5,height:5,borderRadius:10,background:"#E5484D"}}/>}
+            </button>;
           })}
         </div>
       </div>
 
-      <div style={{display:"flex",gap:14,fontSize:11,color:"#7C8592"}}>
-        <span><span style={{display:"inline-block",width:10,height:10,background:"rgba(61,220,151,0.4)",borderRadius:3,marginRight:4}}/>Holiday</span>
-        <span><span style={{display:"inline-block",width:10,height:10,background:"rgba(229,72,77,0.4)",borderRadius:3,marginRight:4}}/>Rider on leave</span>
+      <div style={{display:"flex",gap:12,flexWrap:"wrap",fontSize:11,color:"#9AA3AF"}}>
+        <span><span style={{display:"inline-block",width:10,height:10,background:"rgba(61,220,151,.55)",borderRadius:3,marginRight:5}}/>Holiday / non-working</span>
+        <span><span style={{display:"inline-block",width:10,height:10,background:"rgba(245,166,35,.55)",borderRadius:3,marginRight:5}}/>Half-day work</span>
+        <span><span style={{display:"inline-block",width:10,height:10,background:"rgba(138,165,255,.55)",borderRadius:3,marginRight:5}}/>Observance / working event</span>
+        <span><span style={{display:"inline-block",width:10,height:10,background:"rgba(229,72,77,.7)",borderRadius:3,marginRight:5}}/>Rider leave</span>
       </div>
 
-      <div>
-        <div className="section-label">Riders On Leave This Month</div>
-        <div className="list-card">
-          {approvedLeaves.filter(l=>l.date.startsWith(`${year}-${String(month+1).padStart(2,"0")}`)).length===0 ? (
-            <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No approved leave this month.</div>
-          ) : approvedLeaves.filter(l=>l.date.startsWith(`${year}-${String(month+1).padStart(2,"0")}`)).sort((a,b)=>a.date>b.date?1:-1).map(l=>(
-            <div key={l.id} className="list-row">
-              <div style={{fontSize:13,fontWeight:600}}>{riderName(l.riderId)}</div>
-              <div className="font-mono" style={{fontSize:12,color:"#E5484D"}}>{fmtDate(l.date)}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {myLeaveDays.length > 0 && (
-        <div>
-          <div className="section-label">Your Leave This Month</div>
-          <div className="list-card">
-            {myLeaveDays.map(l=>(
-              <div key={l.id} className="list-row">
-                <div style={{fontSize:13}}>{l.customReason || l.reason}</div>
-                <div className="font-mono" style={{fontSize:12,color:"#E5484D"}}>{fmtDate(l.date)}</div>
-              </div>
-            ))}
+      <div className="card" style={{display:"flex",flexDirection:"column",gap:12,borderColor:selectedStatus==="holiday"?"rgba(61,220,151,.4)":selectedStatus==="half-day"?"rgba(245,166,35,.5)":"rgba(138,165,255,.35)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap"}}>
+          <div>
+            <div style={{fontSize:10,color:"#9AA3AF",textTransform:"uppercase",letterSpacing:".1em",fontWeight:800}}>Selected date details</div>
+            <div className="font-display" style={{fontSize:20,fontWeight:800,marginTop:4}}>{new Date(selectedDate+"T00:00:00").toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
           </div>
+          <span style={{fontSize:11,fontWeight:800,color:statusColor,background:`${statusColor}1A`,border:`1px solid ${statusColor}55`,borderRadius:8,padding:"7px 9px"}}>{statusLabel}</span>
         </div>
-      )}
-
-      <div>
-        <div className="section-label">Festivals & Holidays This Month</div>
-        <div className="list-card">
-          {monthHolidays.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No festivals listed this month.</div> :
-            monthHolidays.map(h=>(
-              <div key={h.id} className="list-row">
-                <div style={{fontSize:13}}>{h.name}</div>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span className="font-mono" style={{fontSize:12,color:"#3DDC97"}}>{fmtDate(h.date)}</span>
-                  {isAdmin && <button onClick={()=>removeHoliday(h.id)} style={{background:"none",border:"none",color:"#7C8592",cursor:"pointer"}}><Trash2 size={13}/></button>}
-                </div>
-              </div>
-            ))
-          }
-        </div>
-        <p style={{fontSize:10,color:"#5B6270",marginTop:6}}>Lunar festival dates (Holi, Diwali, Eid etc.) are approximate — admin can edit or add dates below.</p>
+        {selectedEvents.length>0 || selectedObservances.length>0 ? <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {selectedEvents.map(h=><div key={h.id} style={{background:"#101317",border:"1px solid #292E36",borderRadius:10,padding:11}}><div style={{fontSize:14,fontWeight:800}}>{h.name}</div><div style={{fontSize:11,color:"#9AA3AF",marginTop:3}}>{h.source==="auto"?"Festival / calendar entry":"Added by office"}</div></div>)}
+          {selectedObservances.filter(name=>!selectedEvents.some(h=>h.name.toLowerCase()===name.toLowerCase())).map(name=><div key={name} style={{background:"#101317",border:"1px solid #292E36",borderRadius:10,padding:11,fontSize:13,fontWeight:700}}>{name}<div style={{fontSize:10,color:"#9AA3AF",fontWeight:400,marginTop:3}}>Calendar observance</div></div>)}
+        </div> : <div style={{fontSize:12,color:"#9AA3AF",background:"#101317",padding:12,borderRadius:10}}>No festival or major observance is listed for this date. It is still a selectable calendar day.</div>}
+        {isSunday(selectedDate) && <div style={{fontSize:12,color:"#3DDC97",fontWeight:700}}>Sunday · Weekly off (unless an office working status is set below).</div>}
+        {selectedLeave.length>0 && <div style={{fontSize:12,color:"#E57378"}}>Riders on approved leave: {selectedLeave.map(l=>riderName(l.riderId)).join(", ")}</div>}
+        {isAdmin && selectedEvents.length>0 && <div style={{display:"flex",flexDirection:"column",gap:10,borderTop:"1px solid #292E36",paddingTop:12}}>
+          <div className="section-label">Set office working status for this festival</div>
+          {selectedEvents.map(h=><div key={`edit-${h.id}`} style={{display:"flex",flexDirection:"column",gap:7,background:"#101317",padding:10,borderRadius:10}}>
+            <div style={{fontSize:12,fontWeight:700}}>{h.name}</div>
+            <select className="input" value={editStatus[h.id] ?? h.workStatus ?? "holiday"} onChange={e=>setEditStatus(v=>({...v,[h.id]:e.target.value}))}>
+              <option value="holiday">Festival + non-working / holiday</option><option value="full-day">Festival but working · Full day</option><option value="half-day">Festival but working · Half day</option>
+            </select>
+            {(editStatus[h.id] ?? h.workStatus ?? "holiday")==="half-day" && <input aria-label="Half-day work until" className="input" type="time" value={editUntil[h.id] ?? h.workUntil ?? "13:00"} onChange={e=>setEditUntil(v=>({...v,[h.id]:e.target.value}))}/>}
+            <div style={{display:"flex",gap:8}}><button className="btn-primary" onClick={()=>saveEventStatus(h)} style={{flex:1}}>Save work status</button><button onClick={()=>removeHoliday(h.id)} className="btn-ghost" aria-label={`Delete ${h.name}`}><Trash2 size={15}/></button></div>
+          </div>)}
+        </div>}
       </div>
 
-      {isAdmin && hasDuplicates && (
-        <button onClick={removeDuplicateHolidays} className="btn-ghost" style={{width:"100%",padding:10,borderColor:"rgba(229,72,77,0.4)",color:"#E5484D"}}>
-          Remove Duplicate Festivals
-        </button>
-      )}
-
-      {isAdmin && (
-        <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
-          <div className="section-label">Add Festival / Holiday</div>
-          <input type="date" value={newHolDate} onChange={(e)=>setNewHolDate(e.target.value)} className="input font-mono"/>
-          <input value={newHolName} onChange={(e)=>setNewHolName(e.target.value)} placeholder="Name (e.g. Diwali, Office Closed)" className="input"/>
-          <button onClick={addHoliday} disabled={!newHolName.trim()} className="btn-primary">Add Holiday</button>
+      <div>
+        <div className="section-label">Riders on leave this month</div>
+        <div className="list-card">
+          {approvedLeaves.filter(l=>l.date.startsWith(monthPrefix)).length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No approved leave this month.</div> : approvedLeaves.filter(l=>l.date.startsWith(monthPrefix)).sort((a,b)=>a.date>b.date?1:-1).map(l=><div key={l.id} className="list-row"><div style={{fontSize:13,fontWeight:600}}>{riderName(l.riderId)}</div><div className="font-mono" style={{fontSize:12,color:"#E5484D"}}>{fmtDate(l.date)}</div></div>)}
         </div>
-      )}
+      </div>
+      {myLeaveDays.length>0 && <div><div className="section-label">Your leave this month</div><div className="list-card">{myLeaveDays.map(l=><div key={l.id} className="list-row"><div style={{fontSize:13}}>{l.customReason || l.reason}</div><div className="font-mono" style={{fontSize:12,color:"#E5484D"}}>{fmtDate(l.date)}</div></div>)}</div></div>}
+
+      <div>
+        <div className="section-label">Festivals & holidays this month</div>
+        <div className="list-card">
+          {monthHolidays.length===0 ? <div style={{padding:16,fontSize:13,color:"#7C8592"}}>No festivals listed this month.</div> : monthHolidays.map(h=>{
+            const st = h.workStatus || "holiday";
+            const stText = st==="half-day" ? `Working half day${h.workUntil?` · until ${h.workUntil}`:""}` : st==="full-day" ? "Working full day" : "Non-working / holiday";
+            return <button key={h.id} type="button" onClick={()=>setSelectedDate(h.date)} style={{width:"100%",textAlign:"left",background:selectedDate===h.date?"rgba(245,166,35,.07)":"transparent",border:0,borderBottom:"1px solid #292E36",padding:13,color:"inherit",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,cursor:"pointer"}}><div style={{minWidth:0}}><div style={{fontSize:13,fontWeight:800}}>{h.name}</div><div style={{fontSize:10,color:st==="holiday"?"#3DDC97":st==="half-day"?"#F5A623":"#8AA5FF",marginTop:4}}>{stText}</div></div><div className="font-mono" style={{fontSize:12,color:"#C5CBD4",whiteSpace:"nowrap"}}>{fmtDate(h.date)}</div></button>;
+          })}
+        </div>
+        <p style={{fontSize:10,color:"#7C8592",marginTop:6,lineHeight:1.5}}>Built-in observances include common international and Indian dates (for example Mother's Day and Father's Day). This is not an exhaustive list of every global observance; lunar festival dates can vary by local calendar.</p>
+      </div>
+
+      {isAdmin && hasDuplicates && <button onClick={removeDuplicateHolidays} className="btn-ghost" style={{width:"100%",padding:10,borderColor:"rgba(229,72,77,0.4)",color:"#E5484D"}}>Remove Duplicate Festivals</button>}
+      {isAdmin && <div className="card" style={{display:"flex",flexDirection:"column",gap:10}}>
+        <div className="section-label">Add festival / observance / office holiday</div>
+        <input aria-label="Event date" type="date" value={newHolDate} onChange={e=>setNewHolDate(e.target.value)} className="input font-mono"/>
+        <input aria-label="Event name" value={newHolName} onChange={e=>setNewHolName(e.target.value)} placeholder="Name (e.g. Dussehra — Office Working)" className="input"/>
+        <select aria-label="Office working status" className="input" value={newHolStatus} onChange={e=>setNewHolStatus(e.target.value)}>
+          <option value="holiday">Festival + non-working / holiday</option><option value="full-day">Festival but working · Full day</option><option value="half-day">Festival but working · Half day</option>
+        </select>
+        {newHolStatus==="half-day" && <input aria-label="Work until time" type="time" className="input" value={newHolUntil} onChange={e=>setNewHolUntil(e.target.value)}/>}
+        <button onClick={addHoliday} disabled={!newHolName.trim()||!newHolDate} className="btn-primary">Add event</button>
+      </div>}
     </div>
   );
 }
